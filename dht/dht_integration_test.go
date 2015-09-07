@@ -37,7 +37,7 @@ func TestBootstrap(t *testing.T) {
 	}
 
 	// getnodes
-	data, err = dht.PackGetNodes(DhtServerList[0], qToxPublicKey)
+	data, err = dht.PackGetNodes(&DhtServerList[0].PublicKey, qToxPublicKey)
 	if err != nil {
 		t.Errorf("error %s", err)
 	}

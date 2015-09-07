@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 
 	"golang.org/x/crypto/nacl/box"
@@ -16,8 +17,56 @@ func payloadSize(packetLength int) (int, error) {
 	return packetLength - gotox.PublicKeySize - gotox.NonceSize - box.Overhead - 1, nil
 }
 
-type Friend struct {
+type NAT struct {
+	/* 1 if currently hole punching, otherwise 0 */
+	HolePunching   uint8
+	PunchingIndex  uint32
+	Tries          uint32
+	PunchingIndex2 uint32
+
+	PunchingTimestamp    uint64
+	RecvNATpingTimestamp uint64
+	NATpingID            uint64
+	NATpingTimestamp     uint64
+}
+
+type IPPTsPng struct {
+	Addr       net.UDPAddr // might not be udp?
+	Timestamp  uint64      // What precision?
+	LastPinged uint64      // timestamp?
+
+	// hardening Hardening
+
+	/* Returned by this node. Either our friend or us. */
+	RetIPPort    net.UDPAddr // might not be udp?
+	RetTimestamp uint64      // ???
+}
+
+type ClientData struct {
 	PublicKey [gotox.PublicKeySize]byte
+	Assoc4    IPPTsPng
+	Assoc6    IPPTsPng
+}
+
+type Friend struct {
+	PublicKey  [gotox.PublicKeySize]byte
+	ClientList []ClientData
+
+	/* Time at which the last get_nodes request was sent. */
+	LastGetNode uint64 //??? by who?
+	/* number of times get_node packets were sent. */
+	BootstrapTimes uint32 //??
+
+	/* Symetric NAT hole punching stuff. */
+	Nat NAT
+
+	lock_count uint16
+	//struct {
+	//    void (*ip_callback)(void *, int32_t, IP_Port);
+	//    void *data;
+	//    int32_t number;
+	//} callbacks[DHT_FRIEND_MAX_LOCKS];
+
 }
 
 type DHT struct {
@@ -73,6 +122,7 @@ func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *Ping
 	// at the outside.
 	log.Printf("Received pingpong: %v", pingPong)
 
+	// TODO: reply only to friends
 	if pingPong.IsPing {
 		// send a pong back!
 		data, err := dht.PackPingPong(false, pingPong.PingID, sender)
@@ -83,7 +133,43 @@ func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *Ping
 		if err != nil {
 			return err
 		}
+	} else {
+		// we received a pong from a friend, so we should do nat hole punching stuff
+		// XXX: incomplete...
+
+		maxUint64 := big.Int{}
+		maxUint64.SetUint64(^uint64(0))
+		num, err := rand.Int(rand.Reader, &maxUint64)
+		if err != nil {
+			return err
+		}
+
+		friend := dht.Friends[*sender]
+		friend.Nat.NATpingID = pingPong.PingID
+		friend.Nat.NATpingID = num.Uint64()
+		friend.Nat.HolePunching = 1
+
 	}
+	return nil
+}
+
+func (dht *DHT) handleGetNodes(sender *[gotox.PublicKeySize]byte, getNodes *GetNodes, addr *net.UDPAddr) error {
+	if *sender == dht.PublicKey {
+		return fmt.Errorf("Rejected GetNodes from ourselves.")
+	}
+	data, err := dht.PackSendNodesIPv6(sender, getNodes.RequestedNodeID, getNodes.SendbackData)
+	if err != nil {
+		return err
+	}
+
+	err = dht.Send(data, addr)
+	if err != nil {
+		return err
+	}
+
+	// TODO
+	//add_to_ping(dht->ping, packet + 1, source);
+
 	return nil
 }
 
@@ -102,15 +188,17 @@ func (dht *DHT) handlePacket(data []byte, addr *net.UDPAddr) error {
 	if err != nil {
 		return err
 	}
+	// TODO: can we have a map of types to functions?
 	switch payload := plainPacket.Payload.(type) {
 	case *PingPong:
-		dht.handlePingPong(plainPacket.Sender, payload, addr)
+		return dht.handlePingPong(plainPacket.Sender, payload, addr)
 	case *SendNodesIPv6:
-		dht.handleSendNodesIPv6(plainPacket.Sender, payload, addr)
+		return dht.handleSendNodesIPv6(plainPacket.Sender, payload, addr)
+	case *GetNodes:
+		return dht.handleGetNodes(plainPacket.Sender, payload, addr)
 	default:
 		return fmt.Errorf("Internal error. Failed to handle payload of parsed packet.")
 	}
-	return nil
 }
 
 func (dht *DHT) Send(data []byte, addr *net.UDPAddr) error {
@@ -168,6 +256,19 @@ func (dht *DHT) encrypt(plain []byte, publicKey *[gotox.PublicKeySize]byte) (*[g
 	return &nonce, encrypted, nil
 }
 
+func (dht *DHT) PackPacket(plainPacket *PlainPacket, publicKey *[gotox.PublicKeySize]byte) ([]byte, error) {
+	encryptedPacket, err := dht.encryptPacket(plainPacket, publicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := encryptedPacket.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 func (dht *DHT) PackPingPong(isPing bool, pingID uint64, publicKey *[gotox.PublicKeySize]byte) ([]byte, error) {
 	pingPong := PingPong{
 		IsPing: isPing,
@@ -177,52 +278,59 @@ func (dht *DHT) PackPingPong(isPing bool, pingID uint64, publicKey *[gotox.Publi
 		Sender:  &dht.PublicKey,
 		Payload: &pingPong,
 	}
+	return dht.PackPacket(&plainPacket, publicKey)
+}
 
-	encryptedPacket, err := dht.encryptPacket(&plainPacket, publicKey)
-	if err != nil {
-		return nil, err
+// TODO: find the closest nodes to the requestedNodeID and return them
+func (dht *DHT) PackSendNodesIPv6(recipient, requestedNodeID *[gotox.PublicKeySize]byte, sendbackData uint64) ([]byte, error) {
+	if *recipient == dht.PublicKey {
+		return nil, fmt.Errorf("Refusing to build SendNodesIPv6 packet to myself.")
 	}
 
-	data, err := encryptedPacket.MarshalBinary()
-	if err != nil {
-		return nil, err
+	//uint32_t num_nodes = get_close_nodes(dht, requestedNodeID, nodes_list?, 0, LAN_ip(ip_port.ip) == 0, 1);
+
+	sendNodesIPv6 := SendNodesIPv6{
+		Number:       0,
+		Nodes:        []Node{},
+		SendbackData: sendbackData,
 	}
-	return data, nil
+	plainPacket := PlainPacket{
+		Sender:  &dht.PublicKey,
+		Payload: &sendNodesIPv6,
+	}
+	return dht.PackPacket(&plainPacket, recipient)
 }
 
 // getNodes sends a getnodes request to the target
 // TODO: implement sendback data? - it's used to prevent replay attacks - it can also be used to match requests with responses
 // TODO: see if we can actually receive the reply here... or we should receive be async
-func (dht *DHT) PackGetNodes(node Node, queryKey [gotox.PublicKeySize]byte) ([]byte, error) {
-	if node.PublicKey == dht.PublicKey {
+func (dht *DHT) PackGetNodes(publicKey *[gotox.PublicKeySize]byte, queryKey [gotox.PublicKeySize]byte) ([]byte, error) {
+	if *publicKey == dht.PublicKey {
 		return nil, fmt.Errorf("Refusing to talk to myself.")
 	}
 
 	getNodes := GetNodes{
-		RequestedNodeID: new([gotox.PublicKeySize]byte),
+		RequestedNodeID: publicKey,
 		SendbackData:    1,
 	}
-	copy(getNodes.RequestedNodeID[:], dht.PublicKey[:])
 	plainPacket := PlainPacket{
 		Sender:  &dht.PublicKey,
 		Payload: &getNodes,
 	}
-
-	encryptedPacket, err := dht.encryptPacket(&plainPacket, &node.PublicKey)
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := encryptedPacket.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
+	return dht.PackPacket(&plainPacket, publicKey)
 }
 
-func (dht *DHT) Bootstrap(node Node) {
+func (dht *DHT) Bootstrap(node Node) error {
 	// we add ourselves to the dht by querying ourselves???
-	dht.PackGetNodes(node, dht.PublicKey)
+	data, err := dht.PackGetNodes(&node.PublicKey, dht.PublicKey)
+	if err != nil {
+		return err
+	}
+	err = dht.Send(data, &node.Addr)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // TODO: make it possible to communicate with this friend - maybe give the caller a channel? maybe return a Friend

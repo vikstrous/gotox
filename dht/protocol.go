@@ -99,7 +99,7 @@ type GetNodes struct {
 }
 
 type SendNodesIPv6 struct {
-	Number       uint8
+	Number       uint8 // TODO: remove this because Nodes have a length already
 	Nodes        []Node
 	SendbackData uint64
 }
@@ -388,6 +388,7 @@ func (dht *DHT) decryptPacket(encrypted *EncryptedPacket) (*PlainPacket, error) 
 	if err != nil {
 		return nil, err
 	}
+
 	return &plain, nil
 }
 

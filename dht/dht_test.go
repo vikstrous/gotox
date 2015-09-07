@@ -52,7 +52,7 @@ func TestGetNodes(t *testing.T) {
 		PublicKey: qToxPublicKey,
 	}
 
-	data, err := dht.PackGetNodes(node, qToxPublicKey)
+	data, err := dht.PackGetNodes(&node.PublicKey, qToxPublicKey)
 	if err != nil {
 		t.Errorf("Failed to build getNodes. %s", err)
 	}

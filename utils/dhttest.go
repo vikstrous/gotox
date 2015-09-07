@@ -36,7 +36,7 @@ func main() {
 	}
 
 	// getnodes
-	data, err = dhtServer.PackGetNodes(dht.DhtServerList[0], publicKey)
+	data, err = dhtServer.PackGetNodes(&dht.DhtServerList[0].PublicKey, publicKey)
 	if err != nil {
 		fmt.Printf("error %s\n", err)
 		return
