@@ -68,30 +68,14 @@ func New() (*DHT, error) {
 }
 
 // handlePong assumes the message is the right size
-func (dht *DHT) handlePingPong(ping bool, data []byte, addr *net.UDPAddr) error {
-	var encryptedPacket EncryptedPacket
-	err := encryptedPacket.UnmarshalBinary(data)
-	if err != nil {
-		return err
-	}
-	plainPacket, err := dht.decryptPacket(&encryptedPacket)
-	if err != nil {
-		return err
-	}
-	switch plainPacket.Payload.(type) {
-	case *PingPong:
-	default:
-		return fmt.Errorf("Internal error. Failed to parse PingPong")
-	}
-	pingPong := plainPacket.Payload.(*PingPong)
-	if pingPong.IsPing != ping {
-		return fmt.Errorf("Not a ping. Spoofed packet?")
-	}
-	log.Printf("Received pingpong: %b %d", ping, pingPong.PingID)
+func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *PingPong, addr *net.UDPAddr) error {
+	// We don't care if the ping bit inside the encrypted message matches the outside. We just handle pings and pongs the same way
+	// at the outside.
+	log.Printf("Received pingpong: %v", pingPong)
 
-	if ping {
+	if pingPong.IsPing {
 		// send a pong back!
-		data, err := dht.PackPingPong(false, pingPong.PingID, encryptedPacket.Sender)
+		data, err := dht.PackPingPong(false, pingPong.PingID, sender)
 		if err != nil {
 			return err
 		}
@@ -103,7 +87,12 @@ func (dht *DHT) handlePingPong(ping bool, data []byte, addr *net.UDPAddr) error 
 	return nil
 }
 
-func (dht *DHT) handleSendNodesIPv6(data []byte) error {
+func (dht *DHT) handleSendNodesIPv6(sender *[gotox.PublicKeySize]byte, sn *SendNodesIPv6, addr *net.UDPAddr) error {
+	log.Printf("Received SendNodesIPv6: %v", sn)
+	return nil
+}
+
+func (dht *DHT) handlePacket(data []byte, addr *net.UDPAddr) error {
 	var encryptedPacket EncryptedPacket
 	err := encryptedPacket.UnmarshalBinary(data)
 	if err != nil {
@@ -113,13 +102,14 @@ func (dht *DHT) handleSendNodesIPv6(data []byte) error {
 	if err != nil {
 		return err
 	}
-	switch plainPacket.Payload.(type) {
+	switch payload := plainPacket.Payload.(type) {
+	case *PingPong:
+		dht.handlePingPong(plainPacket.Sender, payload, addr)
 	case *SendNodesIPv6:
+		dht.handleSendNodesIPv6(plainPacket.Sender, payload, addr)
 	default:
-		return fmt.Errorf("Internal error. Failed to parse SendNodesIPv6")
+		return fmt.Errorf("Internal error. Failed to handle payload of parsed packet.")
 	}
-	sn := plainPacket.Payload.(*SendNodesIPv6)
-	log.Printf("Received SendNodesIPv6: %v", sn)
 	return nil
 }
 
@@ -146,19 +136,7 @@ func (dht *DHT) Serve() {
 
 		if buffer_length >= 1 {
 			message := buffer[:buffer_length]
-			log.Printf("Message type %d\n", buffer[0])
-			switch buffer[0] {
-			case netPacketPingResponse:
-				err = dht.handlePingPong(false, message, addr)
-			case netPacketPingRequest:
-				err = dht.handlePingPong(true, message, addr)
-			case netPacketSendNodesIPv6:
-				err = dht.handleSendNodesIPv6(message)
-			default:
-				log.Printf("Unhandled message received: %d", message[0])
-				close(dht.Request)
-				return
-			}
+			dht.handlePacket(message, addr)
 			if err != nil {
 				log.Printf("Error handling message received: %v", err)
 				err = nil
@@ -213,7 +191,7 @@ func (dht *DHT) PackPingPong(isPing bool, pingID uint64, publicKey *[gotox.Publi
 }
 
 // getNodes sends a getnodes request to the target
-// TODO: implement sendback data?
+// TODO: implement sendback data? - it's used to prevent replay attacks - it can also be used to match requests with responses
 // TODO: see if we can actually receive the reply here... or we should receive be async
 func (dht *DHT) PackGetNodes(node Node, queryKey [gotox.PublicKeySize]byte) ([]byte, error) {
 	if node.PublicKey == dht.PublicKey {
