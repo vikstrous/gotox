@@ -14,7 +14,7 @@ import (
 	"github.com/vikstrous/gotox"
 )
 
-var dhtServerList []Node
+var DhtServerList []Node
 
 func init() {
 	// TODO: read these from a config file
@@ -22,10 +22,10 @@ func init() {
 	key32 := [32]byte{}
 	key, _ := hex.DecodeString("04119E835DF3E78BACF0F84235B300546AF8B936F035185E2A8E9E0A67C8924F")
 	copy(key32[:], key)
-	dhtServerList = []Node{
+	DhtServerList = []Node{
 		Node{
-			publicKey: key32,
-			addr: net.UDPAddr{
+			PublicKey: key32,
+			Addr: net.UDPAddr{
 				IP:   []byte{144, 76, 60, 215},
 				Port: 33445,
 			},
@@ -88,9 +88,9 @@ func init() {
 
 //TODO: store the ip type because it might be tcp
 type Node struct {
-	publicKey [gotox.PublicKeySize]byte
+	PublicKey [gotox.PublicKeySize]byte
 	// TODO: don't assume a node has only one address?
-	addr net.UDPAddr
+	Addr net.UDPAddr
 }
 
 type GetNodes struct {
@@ -210,7 +210,7 @@ func (n *Node) MarshalBinary() ([]byte, error) {
 	// TODO: support TCP
 	buf := new(bytes.Buffer)
 	var err error
-	if ipv4 := n.addr.IP.To4(); ipv4 != nil {
+	if ipv4 := n.Addr.IP.To4(); ipv4 != nil {
 		// family 1 byte
 		err = binary.Write(buf, binary.LittleEndian, AF_INET)
 		if err != nil {
@@ -221,7 +221,7 @@ func (n *Node) MarshalBinary() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-	} else if ipv6 := n.addr.IP.To16(); ipv6 != nil {
+	} else if ipv6 := n.Addr.IP.To16(); ipv6 != nil {
 		// family 1 byte
 		err = binary.Write(buf, binary.LittleEndian, AF_INET6)
 		if err != nil {
@@ -236,12 +236,12 @@ func (n *Node) MarshalBinary() ([]byte, error) {
 		return nil, fmt.Errorf("Invalid node address for node %v", n)
 	}
 	// port 2 bytes
-	err = binary.Write(buf, binary.LittleEndian, uint16(n.addr.Port))
+	err = binary.Write(buf, binary.LittleEndian, uint16(n.Addr.Port))
 	if err != nil {
 		return nil, err
 	}
 	// public key 32 bytes
-	_, err = buf.Write(n.publicKey[:])
+	_, err = buf.Write(n.PublicKey[:])
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +266,7 @@ func (n *Node) UnmarshalBinary(data []byte) error {
 	} else {
 		return fmt.Errorf("Unknown ip type %d", ipType)
 	}
-	n.addr.IP = data[1 : 1+ipSize]
+	n.Addr.IP = data[1 : 1+ipSize]
 
 	// port
 	var port uint16
@@ -274,10 +274,10 @@ func (n *Node) UnmarshalBinary(data []byte) error {
 	if err != nil {
 		return err
 	}
-	n.addr.Port = int(port)
+	n.Addr.Port = int(port)
 
 	// public key
-	copy(n.publicKey[:], data[1+ipSize+2:])
+	copy(n.PublicKey[:], data[1+ipSize+2:])
 	return nil
 }
 
@@ -326,7 +326,7 @@ func (p *EncryptedPacket) MarshalBinary() ([]byte, error) {
 
 // TODO: cache the shared key
 // TODO: use sequential nonces to avoid using too much randomness
-func (dht *DHT) encryptPacket(plain *PlainPacket, publicKey [gotox.PublicKeySize]byte) (*EncryptedPacket, error) {
+func (dht *DHT) encryptPacket(plain *PlainPacket, publicKey *[gotox.PublicKeySize]byte) (*EncryptedPacket, error) {
 	var kind uint8
 	switch pl := plain.Payload.(type) {
 	case *PingPong:
@@ -352,7 +352,7 @@ func (dht *DHT) encryptPacket(plain *PlainPacket, publicKey [gotox.PublicKeySize
 		return nil, err
 	}
 	// encrypt payload into encrypted.Payload
-	nonce, cyphertext, err := dht.encrypt(payload, &publicKey)
+	nonce, cyphertext, err := dht.encrypt(payload, publicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +378,7 @@ func (dht *DHT) decryptPacket(encrypted *EncryptedPacket) (*PlainPacket, error) 
 		return nil, fmt.Errorf("Unknown packet type %d.", encrypted.Kind)
 	}
 
-	plainPayload, success := box.Open(nil, encrypted.Payload, encrypted.Nonce, encrypted.Sender, &dht.privateKey)
+	plainPayload, success := box.Open(nil, encrypted.Payload, encrypted.Nonce, encrypted.Sender, &dht.PrivateKey)
 	if !success {
 		return nil, fmt.Errorf("Failed to decrypt.")
 	}

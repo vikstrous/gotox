@@ -1,22 +1,11 @@
 package dht
 
 import (
-	"encoding/hex"
 	"net"
 	//"reflect"
 	"testing"
 	"time"
-
-	"github.com/vikstrous/gotox"
-	"golang.org/x/crypto/nacl/box"
 )
-
-var publicKey = [gotox.PublicKeySize]byte{}
-
-func init() {
-	publicKeySlice, _ := hex.DecodeString("A4D28D52D4116A02147ECE6C6299DA3F5524DEBA043B067CF7D5BF2E09064032353CFD14B519")
-	copy(publicKey[:], publicKeySlice)
-}
 
 func TestBootstrap(t *testing.T) {
 	dht, err := New()
@@ -26,14 +15,33 @@ func TestBootstrap(t *testing.T) {
 	go dht.Serve()
 	defer dht.Stop()
 
-	dht.AddFriend(publicKey)
+	dht.AddFriend(qToxPublicKey)
 
-	// getnodes
-	data, err := dht.getNodes(dhtServerList[0], publicKey)
+	node := Node{
+		Addr: net.UDPAddr{
+			IP:   net.ParseIP("::1"),
+			Port: 33445,
+		},
+		PublicKey: qToxPublicKey,
+	}
+	dht.Bootstrap(node)
+
+	//ping
+	data, err := dht.PackPingPong(true, 1, &node.PublicKey)
 	if err != nil {
 		t.Errorf("error %s", err)
 	}
-	err = dht.send(data, dhtServerList[0])
+	err = dht.Send(data, &node.Addr)
+	if err != nil {
+		t.Errorf("error %s", err)
+	}
+
+	// getnodes
+	data, err = dht.PackGetNodes(DhtServerList[0], qToxPublicKey)
+	if err != nil {
+		t.Errorf("error %s", err)
+	}
+	err = dht.Send(data, &DhtServerList[0].Addr)
 	if err != nil {
 		t.Errorf("error %s", err)
 	}

@@ -17,17 +17,17 @@ func payloadSize(packetLength int) (int, error) {
 }
 
 type Friend struct {
-	publicKey [gotox.PublicKeySize]byte
+	PublicKey [gotox.PublicKeySize]byte
 }
 
 type DHT struct {
-	server       net.UDPConn
-	request      chan bool
-	symmetricKey [gotox.SymmetricKeySize]byte
-	publicKey    [gotox.PublicKeySize]byte
-	privateKey   [gotox.PrivateKeySize]byte
-	addrToFriend map[net.Addr][gotox.PublicKeySize]byte
-	friends      map[[gotox.PublicKeySize]byte]Friend
+	Server       net.UDPConn
+	Request      chan bool
+	SymmetricKey [gotox.SymmetricKeySize]byte
+	PublicKey    [gotox.PublicKeySize]byte
+	PrivateKey   [gotox.PrivateKeySize]byte
+	AddrToFriend map[net.Addr][gotox.PublicKeySize]byte
+	Friends      map[[gotox.PublicKeySize]byte]Friend
 }
 
 func New() (*DHT, error) {
@@ -50,15 +50,15 @@ func New() (*DHT, error) {
 	}
 
 	dht := DHT{
-		server:       *listener,
-		request:      make(chan bool),
-		symmetricKey: symmetricKey,
-		publicKey:    *publicKey,
-		privateKey:   *privateKey,
+		Server:       *listener,
+		Request:      make(chan bool),
+		SymmetricKey: symmetricKey,
+		PublicKey:    *publicKey,
+		PrivateKey:   *privateKey,
 	}
 
-	dht.addrToFriend = make(map[net.Addr][gotox.PublicKeySize]byte)
-	dht.friends = make(map[[gotox.PublicKeySize]byte]Friend)
+	dht.AddrToFriend = make(map[net.Addr][gotox.PublicKeySize]byte)
+	dht.Friends = make(map[[gotox.PublicKeySize]byte]Friend)
 
 	// TODO: set up pinger
 
@@ -68,7 +68,7 @@ func New() (*DHT, error) {
 }
 
 // handlePong assumes the message is the right size
-func (dht *DHT) handlePingPong(ping bool, data []byte) error {
+func (dht *DHT) handlePingPong(ping bool, data []byte, addr *net.UDPAddr) error {
 	var encryptedPacket EncryptedPacket
 	err := encryptedPacket.UnmarshalBinary(data)
 	if err != nil {
@@ -88,6 +88,18 @@ func (dht *DHT) handlePingPong(ping bool, data []byte) error {
 		return fmt.Errorf("Not a ping. Spoofed packet?")
 	}
 	log.Printf("Received pingpong: %b %d", ping, pingPong.PingID)
+
+	if ping {
+		// send a pong back!
+		data, err := dht.PackPingPong(false, pingPong.PingID, encryptedPacket.Sender)
+		if err != nil {
+			return err
+		}
+		err = dht.Send(data, addr)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -111,8 +123,9 @@ func (dht *DHT) handleSendNodesIPv6(data []byte) error {
 	return nil
 }
 
-func (dht *DHT) send(data []byte, node Node) error {
-	_, _, err := dht.server.WriteMsgUDP(data, nil, &node.addr)
+func (dht *DHT) Send(data []byte, addr *net.UDPAddr) error {
+	fmt.Printf("sending %v\n", data)
+	_, _, err := dht.Server.WriteMsgUDP(data, nil, addr)
 	return err
 }
 
@@ -122,12 +135,12 @@ func (dht *DHT) Serve() {
 		// TODO: can we make this buffer smaller?
 		oob := make([]byte, 2048)
 		// n, oobn, flags, addr, err
-		buffer_length, _, _, _, err := dht.server.ReadMsgUDP(buffer, oob)
+		buffer_length, _, _, addr, err := dht.Server.ReadMsgUDP(buffer, oob)
 		if err != nil {
 			// This is usually how we stop the server
 			// Do any necessary cleanup here.
 			//log.Fatal(err)
-			close(dht.request)
+			close(dht.Request)
 			return
 		}
 
@@ -136,14 +149,14 @@ func (dht *DHT) Serve() {
 			log.Printf("Message type %d\n", buffer[0])
 			switch buffer[0] {
 			case netPacketPingResponse:
-				err = dht.handlePingPong(false, message)
+				err = dht.handlePingPong(false, message, addr)
 			case netPacketPingRequest:
-				err = dht.handlePingPong(true, message)
+				err = dht.handlePingPong(true, message, addr)
 			case netPacketSendNodesIPv6:
 				err = dht.handleSendNodesIPv6(message)
 			default:
 				log.Printf("Unhandled message received: %d", message[0])
-				close(dht.request)
+				close(dht.Request)
 				return
 			}
 			if err != nil {
@@ -152,7 +165,7 @@ func (dht *DHT) Serve() {
 			}
 		} else {
 			log.Printf("Received empty message")
-			close(dht.request)
+			close(dht.Request)
 			return
 		}
 		//TODO: look up peer in friends list
@@ -173,21 +186,21 @@ func (dht *DHT) encrypt(plain []byte, publicKey *[gotox.PublicKeySize]byte) (*[g
 	if err != nil {
 		return nil, nil, err
 	}
-	encrypted := box.Seal(nil, plain, &nonce, publicKey, &dht.privateKey)
+	encrypted := box.Seal(nil, plain, &nonce, publicKey, &dht.PrivateKey)
 	return &nonce, encrypted, nil
 }
 
-func (dht *DHT) ping(kind uint8, node Node) ([]byte, error) {
+func (dht *DHT) PackPingPong(isPing bool, pingID uint64, publicKey *[gotox.PublicKeySize]byte) ([]byte, error) {
 	pingPong := PingPong{
-		IsPing: true,
-		PingID: 1,
+		IsPing: isPing,
+		PingID: pingID,
 	}
 	plainPacket := PlainPacket{
-		Sender:  &dht.publicKey,
+		Sender:  &dht.PublicKey,
 		Payload: &pingPong,
 	}
 
-	encryptedPacket, err := dht.encryptPacket(&plainPacket, node.publicKey)
+	encryptedPacket, err := dht.encryptPacket(&plainPacket, publicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -202,8 +215,8 @@ func (dht *DHT) ping(kind uint8, node Node) ([]byte, error) {
 // getNodes sends a getnodes request to the target
 // TODO: implement sendback data?
 // TODO: see if we can actually receive the reply here... or we should receive be async
-func (dht *DHT) getNodes(node Node, queryKey [gotox.PublicKeySize]byte) ([]byte, error) {
-	if node.publicKey == dht.publicKey {
+func (dht *DHT) PackGetNodes(node Node, queryKey [gotox.PublicKeySize]byte) ([]byte, error) {
+	if node.PublicKey == dht.PublicKey {
 		return nil, fmt.Errorf("Refusing to talk to myself.")
 	}
 
@@ -211,13 +224,13 @@ func (dht *DHT) getNodes(node Node, queryKey [gotox.PublicKeySize]byte) ([]byte,
 		RequestedNodeID: new([gotox.PublicKeySize]byte),
 		SendbackData:    1,
 	}
-	copy(getNodes.RequestedNodeID[:], dht.publicKey[:])
+	copy(getNodes.RequestedNodeID[:], dht.PublicKey[:])
 	plainPacket := PlainPacket{
-		Sender:  &dht.publicKey,
+		Sender:  &dht.PublicKey,
 		Payload: &getNodes,
 	}
 
-	encryptedPacket, err := dht.encryptPacket(&plainPacket, node.publicKey)
+	encryptedPacket, err := dht.encryptPacket(&plainPacket, &node.PublicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -230,20 +243,20 @@ func (dht *DHT) getNodes(node Node, queryKey [gotox.PublicKeySize]byte) ([]byte,
 }
 
 func (dht *DHT) Bootstrap(node Node) {
-	// we add ourselves to the dht by querying ourselves
-	dht.getNodes(node, dht.publicKey)
+	// we add ourselves to the dht by querying ourselves???
+	dht.PackGetNodes(node, dht.PublicKey)
 }
 
 // TODO: make it possible to communicate with this friend - maybe give the caller a channel? maybe return a Friend
 // maybe associate some data with the friend?
 // This adds a one more user to a friend in the dht; first it looks up the friend by the public key, then it increments the number of users of the friend
 func (dht *DHT) AddFriend(publicKey [gotox.PublicKeySize]byte) error {
-	dht.friends[publicKey] = Friend{
-		publicKey: publicKey,
+	dht.Friends[publicKey] = Friend{
+		PublicKey: publicKey,
 	}
 	return nil
 }
 
 func (dht *DHT) Stop() {
-	dht.server.Close()
+	dht.Server.Close()
 }
