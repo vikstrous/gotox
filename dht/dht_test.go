@@ -111,7 +111,6 @@ func TestMarshalSendNodesIPv6(t *testing.T) {
 		PublicKey: qToxPublicKey,
 	}
 	sendNodesIPv6 := SendNodesIPv6{
-		Number:       1,
 		Nodes:        []Node{node},
 		SendbackData: 1,
 	}

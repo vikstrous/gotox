@@ -290,7 +290,6 @@ func (dht *DHT) PackSendNodesIPv6(recipient, requestedNodeID *[gotox.PublicKeySi
 	//uint32_t num_nodes = get_close_nodes(dht, requestedNodeID, nodes_list?, 0, LAN_ip(ip_port.ip) == 0, 1);
 
 	sendNodesIPv6 := SendNodesIPv6{
-		Number:       0,
 		Nodes:        []Node{},
 		SendbackData: sendbackData,
 	}

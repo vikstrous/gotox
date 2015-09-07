@@ -99,7 +99,6 @@ type GetNodes struct {
 }
 
 type SendNodesIPv6 struct {
-	Number       uint8 // TODO: remove this because Nodes have a length already
 	Nodes        []Node
 	SendbackData uint64
 }
@@ -145,12 +144,12 @@ type PingPong struct {
 
 func (sn *SendNodesIPv6) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
-	if sn.Number > 4 {
-		return nil, fmt.Errorf("Attempt to send too many nodes in reply: %d", sn.Number)
+	if len(sn.Nodes) > 4 {
+		return nil, fmt.Errorf("Attempt to send too many nodes in reply: %d", len(sn.Nodes))
 	}
 
 	// number
-	err := binary.Write(buf, binary.LittleEndian, sn.Number)
+	err := binary.Write(buf, binary.LittleEndian, uint8(len(sn.Nodes)))
 	if err != nil {
 		return nil, err
 	}
@@ -181,12 +180,13 @@ func (sn *SendNodesIPv6) UnmarshalBinary(data []byte) error {
 
 	log.Printf("sendNodesIPv6 data %v %d", data, len(data))
 	// number of nodes
-	binary.Read(bytes.NewReader(data), binary.LittleEndian, &sn.Number)
+	numNodes := uint8(len(sn.Nodes))
+	binary.Read(bytes.NewReader(data), binary.LittleEndian, &numNodes)
 
 	// nodes
-	sn.Nodes = make([]Node, sn.Number)
+	sn.Nodes = make([]Node, numNodes)
 	offset := 1
-	for n := uint8(0); n < sn.Number; n++ {
+	for n := uint8(0); n < numNodes; n++ {
 		var nodeSize int
 		if data[offset] == AF_INET || data[offset] == TCP_INET {
 			nodeSize = packedNodeSizeIPv4
