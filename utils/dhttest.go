@@ -24,23 +24,12 @@ func main() {
 	go dhtServer.Serve()
 	defer dhtServer.Stop()
 
-	dhtServer.AddFriend(publicKey)
+	dhtServer.AddFriend(&publicKey)
+	dhtServer.AddFriend(&dht.DhtServerList[0].PublicKey)
 
 	dhtServer.Bootstrap(dht.DhtServerList[0])
 
-	data, err := dhtServer.PackPingPong(true, 1, &dht.DhtServerList[0].PublicKey)
-	err = dhtServer.Send(data, &dht.DhtServerList[0].Addr)
-	if err != nil {
-		fmt.Printf("error %s\n", err)
-		return
-	}
-
-	// getnodes
-	data, err = dhtServer.PackGetNodes(&dht.DhtServerList[0].PublicKey, publicKey)
-	if err != nil {
-		fmt.Printf("error %s\n", err)
-		return
-	}
+	data, err := dhtServer.PackPingPong(true, dhtServer.Friends[dht.DhtServerList[0].PublicKey].Nat.NATPingID, &dht.DhtServerList[0].PublicKey)
 	err = dhtServer.Send(data, &dht.DhtServerList[0].Addr)
 	if err != nil {
 		fmt.Printf("error %s\n", err)

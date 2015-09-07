@@ -26,8 +26,8 @@ type NAT struct {
 
 	PunchingTimestamp    uint64
 	RecvNATpingTimestamp uint64
-	NATpingID            uint64
-	NATpingTimestamp     uint64
+	NATPingID            uint64
+	NATPingTimestamp     uint64
 }
 
 type IPPTsPng struct {
@@ -48,6 +48,14 @@ type ClientData struct {
 	Assoc6    IPPTsPng
 }
 
+type FriendCB func(data []byte, number int32, addr net.UDPAddr)
+
+type FriendCBInfo struct {
+	CB     FriendCB
+	Data   []byte // what is this for?
+	Number int32  // what is this for?
+}
+
 type Friend struct {
 	PublicKey  [gotox.PublicKeySize]byte
 	ClientList []ClientData
@@ -60,13 +68,9 @@ type Friend struct {
 	/* Symetric NAT hole punching stuff. */
 	Nat NAT
 
-	lock_count uint16
-	//struct {
-	//    void (*ip_callback)(void *, int32_t, IP_Port);
-	//    void *data;
-	//    int32_t number;
-	//} callbacks[DHT_FRIEND_MAX_LOCKS];
+	LockCount uint16
 
+	FriendCBs []FriendCBInfo
 }
 
 type DHT struct {
@@ -116,6 +120,16 @@ func New() (*DHT, error) {
 	return &dht, nil
 }
 
+func randUint64() (uint64, error) {
+	maxUint64 := big.Int{}
+	maxUint64.SetUint64(^uint64(0))
+	num, err := rand.Int(rand.Reader, &maxUint64)
+	if err != nil {
+		return 0, err
+	}
+	return num.Uint64(), nil
+}
+
 // handlePong assumes the message is the right size
 func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *PingPong, addr *net.UDPAddr) error {
 	// We don't care if the ping bit inside the encrypted message matches the outside. We just handle pings and pongs the same way
@@ -136,17 +150,19 @@ func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *Ping
 	} else {
 		// we received a pong from a friend, so we should do nat hole punching stuff
 		// XXX: incomplete...
-
-		maxUint64 := big.Int{}
-		maxUint64.SetUint64(^uint64(0))
-		num, err := rand.Int(rand.Reader, &maxUint64)
+		num, err := randUint64()
 		if err != nil {
 			return err
 		}
 
-		friend := dht.Friends[*sender]
-		friend.Nat.NATpingID = pingPong.PingID
-		friend.Nat.NATpingID = num.Uint64()
+		friend, isFriend := dht.Friends[*sender]
+		if !isFriend {
+			return fmt.Errorf("Received pong from non-friend %v %v", *sender, pingPong)
+		}
+		if friend.Nat.NATPingID != pingPong.PingID {
+			return fmt.Errorf("Pong ID doesn't match ping ID. Replay detected? %d %d", friend.Nat.NATPingID, pingPong.PingID)
+		}
+		friend.Nat.NATPingID = num
 		friend.Nat.HolePunching = 1
 
 	}
@@ -224,7 +240,7 @@ func (dht *DHT) Serve() {
 
 		if buffer_length >= 1 {
 			message := buffer[:buffer_length]
-			dht.handlePacket(message, addr)
+			err := dht.handlePacket(message, addr)
 			if err != nil {
 				log.Printf("Error handling message received: %v", err)
 				err = nil
@@ -332,12 +348,41 @@ func (dht *DHT) Bootstrap(node Node) error {
 	return nil
 }
 
-// TODO: make it possible to communicate with this friend - maybe give the caller a channel? maybe return a Friend
+// TODO: make it possible to communicate with this friend - maybe give the caller a channel?
+// TODO: optionally add callbacks on friends? Or should we use channels? optionally add channels to send to?
+// TODO: tell the caller WHICH lock they have so they can release it
 // maybe associate some data with the friend?
 // This adds a one more user to a friend in the dht; first it looks up the friend by the public key, then it increments the number of users of the friend
-func (dht *DHT) AddFriend(publicKey [gotox.PublicKeySize]byte) error {
-	dht.Friends[publicKey] = Friend{
-		PublicKey: publicKey,
+func (dht *DHT) AddFriend(publicKey *[gotox.PublicKeySize]byte) error {
+	friend, friendExists := dht.Friends[*publicKey]
+	if friendExists {
+		friend.LockCount += 1
+		dht.Friends[*publicKey] = friend
+		return nil
+	}
+
+	pingID, err := randUint64()
+	if err != nil {
+		return err
+	}
+	friend.PublicKey = *publicKey
+	friend.Nat.NATPingID = pingID
+
+	dht.Friends[*publicKey] = friend
+	return nil
+}
+
+// TODO: add a way to specify WHICH lock to release
+func (dht *DHT) DelFriend(publicKey *[gotox.PublicKeySize]byte) error {
+	friend, friendExists := dht.Friends[*publicKey]
+	if !friendExists {
+		return fmt.Errorf("Failed to find friend to delete")
+	}
+	friend.LockCount -= 1
+	if friend.LockCount == 0 {
+		delete(dht.Friends, *publicKey)
+	} else {
+		dht.Friends[*publicKey] = friend
 	}
 	return nil
 }
