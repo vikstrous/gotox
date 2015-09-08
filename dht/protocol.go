@@ -93,6 +93,7 @@ type Node struct {
 	Addr net.UDPAddr
 }
 
+// TODO: rename SendbackData to RequestID
 type GetNodes struct {
 	RequestedNodeID *[gotox.PublicKeySize]byte
 	SendbackData    uint64
@@ -120,6 +121,7 @@ type PlainPacket struct {
 	Payload BinaryMarshalable
 }
 
+// TODO: rename PingID to RequestID
 type PingPong struct {
 	IsPing bool
 	PingID uint64

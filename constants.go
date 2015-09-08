@@ -12,6 +12,7 @@ const NonceSize = 24
 const SymmetricKeySize = 32
 const PublicKeySize = 32
 const PrivateKeySize = 32
+const MaxCloseClients = 32
 
 // Tox addresses are in the format
 // * [Public Key (TOX_PUBLIC_KEY_SIZE bytes)][nospam (4 bytes)][checksum (2 bytes)].

@@ -15,7 +15,7 @@ func TestBootstrap(t *testing.T) {
 	go dht.Serve()
 	defer dht.Stop()
 
-	dht.AddFriend(qToxPublicKey)
+	dht.AddFriend(&qToxPublicKey)
 
 	node := Node{
 		Addr: net.UDPAddr{

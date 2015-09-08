@@ -1,11 +1,13 @@
 package dht
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	"log"
 	"math/big"
 	"net"
+	"time"
 
 	"golang.org/x/crypto/nacl/box"
 	//"golang.org/x/crypto/nacl/secretbox"
@@ -32,8 +34,8 @@ type NAT struct {
 
 type IPPTsPng struct {
 	Addr       net.UDPAddr // might not be udp?
-	Timestamp  uint64      // What precision?
-	LastPinged uint64      // timestamp?
+	Timestamp  time.Time
+	LastPinged time.Time
 
 	// hardening Hardening
 
@@ -57,8 +59,8 @@ type FriendCBInfo struct {
 }
 
 type Friend struct {
-	PublicKey  [gotox.PublicKeySize]byte
-	ClientList []ClientData
+	PublicKey    [gotox.PublicKeySize]byte
+	CloseClients map[[gotox.PublicKeySize]byte]ClientData
 
 	/* Time at which the last get_nodes request was sent. */
 	LastGetNode uint64 //??? by who?
@@ -79,8 +81,11 @@ type DHT struct {
 	SymmetricKey [gotox.SymmetricKeySize]byte
 	PublicKey    [gotox.PublicKeySize]byte
 	PrivateKey   [gotox.PrivateKeySize]byte
-	AddrToFriend map[net.Addr][gotox.PublicKeySize]byte
-	Friends      map[[gotox.PublicKeySize]byte]Friend
+	// This would be relevant only for speeding up lookups of CloseClients, but the list is so small anyway
+	//AddrToFriend map[net.Addr][gotox.PublicKeySize]byte
+	Friends map[[gotox.PublicKeySize]byte]Friend
+	// the closest 32 clients to us
+	CloseClients map[[gotox.PublicKeySize]byte]ClientData
 }
 
 func New() (*DHT, error) {
@@ -110,8 +115,9 @@ func New() (*DHT, error) {
 		PrivateKey:   *privateKey,
 	}
 
-	dht.AddrToFriend = make(map[net.Addr][gotox.PublicKeySize]byte)
+	//dht.AddrToFriend = make(map[net.Addr][gotox.PublicKeySize]byte)
 	dht.Friends = make(map[[gotox.PublicKeySize]byte]Friend)
+	dht.CloseClients = make(map[[gotox.PublicKeySize]byte]ClientData)
 
 	// TODO: set up pinger
 
@@ -189,8 +195,85 @@ func (dht *DHT) handleGetNodes(sender *[gotox.PublicKeySize]byte, getNodes *GetN
 	return nil
 }
 
+func addrEq(addr1, addr2 net.UDPAddr) bool {
+	if !bytes.Equal(addr1.IP, addr2.IP) {
+		return false
+	}
+	if addr1.Port != addr2.Port {
+		return false
+	}
+	return true
+}
+
+// the case for our own node is the same as for friends; friends have their own client list that we use to find them
+// This adds nodes to the list only if they are better than the ones we have available so far
+// Close is also known as client_list in toxcore
+func (dht *DHT) addToList(node *Node, clientList map[[gotox.PublicKeySize]byte]ClientData) error {
+	ipv4 := node.Addr.IP.To4() != nil
+	now := time.Now()
+	// TODO: consider if we should have one ipv4 and one ipv6 address or just one which can be anything
+
+	// This updates or creates the client
+	clientData, found := clientList[node.PublicKey]
+	if !found {
+		// if the public key is missing but the port is in the list, change the public key for that entry
+		for k, v := range clientList {
+			if ipv4 && addrEq(v.Assoc4.Addr, node.Addr) || !ipv4 && addrEq(v.Assoc6.Addr, node.Addr) {
+				clientData = clientList[k]
+				delete(clientList, k)
+				break
+			}
+		}
+	}
+
+	clientData.PublicKey = node.PublicKey
+	if ipv4 {
+		// TODO: don't update if we already have a lan ip???
+		clientData.Assoc4.Addr = node.Addr
+		clientData.Assoc4.Timestamp = now
+	} else {
+		// TODO: don't update if we already have a lan ip???
+		clientData.Assoc6.Addr = node.Addr
+		clientData.Assoc6.Timestamp = now
+	}
+	clientList[node.PublicKey] = clientData
+
+	if len(clientList) > gotox.MaxCloseClients {
+		log.Printf("Too many close clients! Must discard some... %d", len(clientList))
+	}
+	// TODO if we are over the limit of nodes to add, replace the worst node (or the first bad one)
+	/* Replace a first bad (or empty) node with this one
+	 *  or replace a possibly bad node (tests failed or not done yet)
+	 *  that is further than any other in the list
+	 *  from the comp_public_key
+	 *  or replace a good node that is further
+	 *  than any other in the list from the comp_public_key
+	 *  and further than public_key.
+	 *
+	 * Do not replace any node if the list has no bad or possibly bad nodes
+	 *  and all nodes in the list are closer to comp_public_key
+	 *  than public_key.
+	 *
+	 *  returns True(1) when the item was stored, False(0) otherwise */
+	return nil
+}
+
 func (dht *DHT) handleSendNodesIPv6(sender *[gotox.PublicKeySize]byte, sn *SendNodesIPv6, addr *net.UDPAddr) error {
 	log.Printf("Received SendNodesIPv6: %v", sn)
+	// TODO: check if we legitimately sent a request for these nodes by:
+	// looking up the ping id in the ping_array with sn.SendbackData
+	// checking that the source ip matches the one we messaged
+	// checking that the public key matches the one we messaged
+
+	for _, node := range sn.Nodes {
+		dht.addToList(&node, dht.CloseClients)
+		log.Printf("We have %d CloseClients", len(dht.CloseClients))
+		for _, friend := range dht.Friends {
+			dht.addToList(&node, friend.CloseClients)
+			log.Printf("%v has %d CloseClients", friend.PublicKey, len(friend.CloseClients))
+		}
+	}
+	// returnedip_ports
 	return nil
 }
 
@@ -223,6 +306,13 @@ func (dht *DHT) Send(data []byte, addr *net.UDPAddr) error {
 	return err
 }
 
+// TODO:
+/* Ping each client in the "friends" list every PING_INTERVAL seconds. Send a get nodes request
+ * every GET_NODE_INTERVAL seconds to a random good node for each "friend" in our "friends" list.
+ */
+/* Ping each client in the close nodes list every PING_INTERVAL seconds.
+ * Send a get nodes request every GET_NODE_INTERVAL seconds to a random good node in the list.
+ */
 func (dht *DHT) Serve() {
 	for {
 		buffer := make([]byte, 2048)
@@ -336,7 +426,7 @@ func (dht *DHT) PackGetNodes(publicKey *[gotox.PublicKeySize]byte, queryKey [got
 }
 
 func (dht *DHT) Bootstrap(node Node) error {
-	// we add ourselves to the dht by querying ourselves???
+	// we query ourselves to find the closest nodes to us
 	data, err := dht.PackGetNodes(&node.PublicKey, dht.PublicKey)
 	if err != nil {
 		return err
@@ -367,6 +457,7 @@ func (dht *DHT) AddFriend(publicKey *[gotox.PublicKeySize]byte) error {
 	}
 	friend.PublicKey = *publicKey
 	friend.Nat.NATPingID = pingID
+	friend.CloseClients = make(map[[gotox.PublicKeySize]byte]ClientData)
 
 	dht.Friends[*publicKey] = friend
 	return nil
