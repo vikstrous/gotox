@@ -28,8 +28,8 @@ type NAT struct {
 
 	PunchingTimestamp    uint64
 	RecvNATpingTimestamp uint64
-	NATPingID            uint64
-	NATPingTimestamp     uint64
+	//NATPingID            uint64
+	NATPingTimestamp uint64
 }
 
 type IPPTsPng struct {
@@ -39,9 +39,9 @@ type IPPTsPng struct {
 
 	// hardening Hardening
 
-	/* Returned by this node. Either our friend or us. */
-	RetIPPort    net.UDPAddr // might not be udp?
-	RetTimestamp uint64      // ???
+	// This is a claim that the friend (or us) can be found at this address
+	RetAddr      net.UDPAddr
+	RetTimestamp time.Time
 }
 
 type ClientData struct {
@@ -140,7 +140,7 @@ func randUint64() (uint64, error) {
 func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *PingPong, addr *net.UDPAddr) error {
 	// We don't care if the ping bit inside the encrypted message matches the outside. We just handle pings and pongs the same way
 	// at the outside.
-	log.Printf("Received pingpong: %v", pingPong)
+	log.Printf("Received pingpong: %v from %v", pingPong, addr)
 
 	// TODO: reply only to friends
 	if pingPong.IsPing {
@@ -156,19 +156,21 @@ func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *Ping
 	} else {
 		// we received a pong from a friend, so we should do nat hole punching stuff
 		// XXX: incomplete...
-		num, err := randUint64()
-		if err != nil {
-			return err
-		}
+		//num, err := randUint64()
+		//if err != nil {
+		//	return err
+		//}
 
 		friend, isFriend := dht.Friends[*sender]
 		if !isFriend {
 			return fmt.Errorf("Received pong from non-friend %v %v", *sender, pingPong)
 		}
-		if friend.Nat.NATPingID != pingPong.PingID {
-			return fmt.Errorf("Pong ID doesn't match ping ID. Replay detected? %d %d", friend.Nat.NATPingID, pingPong.PingID)
-		}
-		friend.Nat.NATPingID = num
+		// TODO: check the ping id
+		// TODO: generate a ping id for nat punching
+		//if friend.Nat.NATPingID != pingPong.PingID {
+		//	return fmt.Errorf("Pong ID doesn't match ping ID. Replay detected? %d %d", friend.Nat.NATPingID, pingPong.PingID)
+		//}
+		//friend.Nat.NATPingID = num
 		friend.Nat.HolePunching = 1
 
 	}
@@ -191,6 +193,17 @@ func (dht *DHT) handleGetNodes(sender *[gotox.PublicKeySize]byte, getNodes *GetN
 
 	// TODO
 	//add_to_ping(dht->ping, packet + 1, source);
+
+	/* Add nodes to the to_ping list.
+	 * All nodes in this list are pinged every TIME_TO_PING seconds
+	 * and are then removed from the list.
+	 * If the list is full the nodes farthest from our public_key are replaced.
+	 * The purpose of this list is to enable quick integration of new nodes into the
+	 * network while preventing amplification attacks.
+	 *
+	 *  return 0 if node was added.
+	 *  return -1 if node was not added.
+	 */
 
 	return nil
 }
@@ -258,6 +271,26 @@ func (dht *DHT) addToList(node *Node, clientList map[[gotox.PublicKeySize]byte]C
 	return nil
 }
 
+func setRetAddr(node *Node, closeClients map[[gotox.PublicKeySize]byte]ClientData) {
+	now := time.Now()
+	ipv4 := node.Addr.IP.To4() != nil
+	// find the client who told us about ourselves
+	for k, client := range closeClients {
+		if client.PublicKey == node.PublicKey {
+			log.Printf("Found node: %v says %v is at %v", client.PublicKey, node.PublicKey, node.Addr)
+			if ipv4 {
+				client.Assoc4.RetAddr = node.Addr
+				client.Assoc4.RetTimestamp = now
+			} else {
+				client.Assoc6.RetAddr = node.Addr
+				client.Assoc6.RetTimestamp = now
+			}
+			closeClients[k] = client
+			break
+		}
+	}
+}
+
 func (dht *DHT) handleSendNodesIPv6(sender *[gotox.PublicKeySize]byte, sn *SendNodesIPv6, addr *net.UDPAddr) error {
 	log.Printf("Received SendNodesIPv6: %v", sn)
 	// TODO: check if we legitimately sent a request for these nodes by:
@@ -273,6 +306,37 @@ func (dht *DHT) handleSendNodesIPv6(sender *[gotox.PublicKeySize]byte, sn *SendN
 			log.Printf("%v has %d CloseClients", friend.PublicKey, len(friend.CloseClients))
 		}
 	}
+
+	// ping all new nodes
+	for _, node := range sn.Nodes {
+		// TODO: allocate a pingID
+		data, err := dht.PackPingPong(true, 1, &node.PublicKey)
+		if err != nil {
+			log.Printf("Error packing pingpong in handleSendNodesIPv6: %s", err)
+		}
+		err = dht.Send(data, &node.Addr)
+		if err != nil {
+			log.Printf("Error sending pingpong in handleSendNodesIPv6: %s", err)
+		}
+	}
+	// process any results who are our direct friends
+	for _, node := range sn.Nodes {
+		if node.PublicKey == dht.PublicKey {
+			setRetAddr(&node, dht.CloseClients)
+		}
+		for _, friend := range dht.Friends {
+			if friend.PublicKey == node.PublicKey {
+				// TODO: stop iterating through friends early if this succeeds
+				setRetAddr(&node, friend.CloseClients)
+			}
+		}
+	}
+	// We have to make sure that the sender is in their neighbourhood of close friends, otherwise we don't accept the message
+
+	/* If public_key is a friend or us, update ret_ip_port
+	 * nodepublic_key is the id of the node that sent us this info.
+	 */
+
 	// returnedip_ports
 	return nil
 }
@@ -301,7 +365,7 @@ func (dht *DHT) handlePacket(data []byte, addr *net.UDPAddr) error {
 }
 
 func (dht *DHT) Send(data []byte, addr *net.UDPAddr) error {
-	fmt.Printf("sending %v\n", data)
+	log.Printf("sending %v", data)
 	_, _, err := dht.Server.WriteMsgUDP(data, nil, addr)
 	return err
 }
@@ -387,7 +451,7 @@ func (dht *DHT) PackPingPong(isPing bool, pingID uint64, publicKey *[gotox.Publi
 	return dht.PackPacket(&plainPacket, publicKey)
 }
 
-// TODO: find the closest nodes to the requestedNodeID and return them
+// TODO: find the closest nodes to the requestedNodeID and return them in this list
 func (dht *DHT) PackSendNodesIPv6(recipient, requestedNodeID *[gotox.PublicKeySize]byte, sendbackData uint64) ([]byte, error) {
 	if *recipient == dht.PublicKey {
 		return nil, fmt.Errorf("Refusing to build SendNodesIPv6 packet to myself.")
@@ -451,12 +515,13 @@ func (dht *DHT) AddFriend(publicKey *[gotox.PublicKeySize]byte) error {
 		return nil
 	}
 
-	pingID, err := randUint64()
-	if err != nil {
-		return err
-	}
+	//pingID, err := randUint64()
+	//if err != nil {
+	//	return err
+	//}
 	friend.PublicKey = *publicKey
-	friend.Nat.NATPingID = pingID
+	// TODO: remember ping data the same way we do for everything else
+	//friend.Nat.NATPingID = pingID
 	friend.CloseClients = make(map[[gotox.PublicKeySize]byte]ClientData)
 
 	dht.Friends[*publicKey] = friend
