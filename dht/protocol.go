@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -17,80 +18,106 @@ import (
 var DhtServerList []Node
 
 func init() {
-	// TODO: read these from a config file
-	// "sonOfRa",
-	key32 := [32]byte{}
-	key, _ := hex.DecodeString("04119E835DF3E78BACF0F84235B300546AF8B936F035185E2A8E9E0A67C8924F")
-	copy(key32[:], key)
-	DhtServerList = []Node{
-		Node{
-			PublicKey: key32,
-			Addr: net.UDPAddr{
-				IP:   []byte{144, 76, 60, 215},
-				Port: 33445,
-			},
-		},
+	serverListJSON := `[
+	{
+		"Name":"sonfOfRa",
+		"PublicKey":"04119E835DF3E78BACF0F84235B300546AF8B936F035185E2A8E9E0A67C8924F",
+		"Addr":{"IP":"144.76.60.215","Port":33445}
+	},
+	{
+		"Name":"sta1",
+		"PublicKey":"A09162D68618E742FFBCA1C2C70385E6679604B2D80EA6E84AD0996A1AC8A074",
+		"Addr":{"IP":"23.226.230.47","Port":33445}
+	},
+	{
+		"Name":"Munrek",
+		"PublicKey":"E398A69646B8CEACA9F0B84F553726C1C49270558C57DF5F3C368F05A7D71354",
+		"Addr":{"IP":"195.154.119.113","Port":33445}
+	},
+	{
+		"Name":"nurupo",
+		"PublicKey":"F404ABAA1C99A9D37D61AB54898F56793E1DEF8BD46B1038B9D822E8460FAB67",
+		"Addr":{"IP":"192.210.149.121","Port":33445}
+	},
+	{
+		"Name":"Impyy",
+		"PublicKey":"788236D34978D1D5BD822F0A5BEBD2C53C64CC31CD3149350EE27D4D9A2F9B6B",
+		"Addr":{"IP":"178.62.250.138","Port":33445}
+	},
+	{
+		"Name":"Manolis",
+		"PublicKey":"461FA3776EF0FA655F1A05477DF1B3B614F7D6B124F7DB1DD4FE3C08B03B640F",
+		"Addr":{"IP":"130.133.110.14","Port":33445}
+	},
+	{
+		"Name":"noisykeyboard",
+		"PublicKey":"5918AC3C06955962A75AD7DF4F80A5D7C34F7DB9E1498D2E0495DE35B3FE8A57",
+		"Addr":{"IP":"104.167.101.29","Port":33445}
+	},
+	{
+		"Name":"Busindre",
+		"PublicKey":"A179B09749AC826FF01F37A9613F6B57118AE014D4196A0E1105A98F93A54702",
+		"Addr":{"IP":"205.185.116.116","Port":33445}
+	},
+	{
+		"Name":"Busindre",
+		"PublicKey":"1D5A5F2F5D6233058BF0259B09622FB40B482E4FA0931EB8FD3AB8E7BF7DAF6F",
+		"Addr":{"IP":"198.98.51.198","Port":33445}
+	},
+	{
+		"Name":"ray65536",
+		"PublicKey":"8E7D0B859922EF569298B4D261A8CCB5FEA14FB91ED412A7603A585A25698832",
+		"Addr":{"IP":"108.61.165.198","Port":33445}
+	},
+	{
+		"Name":"Kr9r0x",
+		"PublicKey":"C4CEB8C7AC607C6B374E2E782B3C00EA3A63B80D4910B8649CCACDD19F260819",
+		"Addr":{"IP":"212.71.252.109","Port":33445}
+	},
+	{
+		"Name":"fluke571",
+		"PublicKey":"3CEE1F054081E7A011234883BC4FC39F661A55B73637A5AC293DDF1251D9432B",
+		"Addr":{"IP":"194.249.212.109","Port":33445}
+	},
+	{
+		"Name":"MAH69K",
+		"PublicKey":"DA4E4ED4B697F2E9B000EEFE3A34B554ACD3F45F5C96EAEA2516DD7FF9AF7B43",
+		"Addr":{"IP":"185.25.116.107","Port":33445}
+	},
+	{
+		"Name":"WIeschie",
+		"PublicKey":"6A4D0607A296838434A6A7DDF99F50EF9D60A2C510BBF31FE538A25CB6B4652F",
+		"Addr":{"IP":"192.99.168.140","Port":33445}
 	}
-}
+]`
 
-//name=stal
-//userId=A09162D68618E742FFBCA1C2C70385E6679604B2D80EA6E84AD0996A1AC8A074
-//address=23.226.230.47
-//port=33445
-//name=Munrek
-//userId=E398A69646B8CEACA9F0B84F553726C1C49270558C57DF5F3C368F05A7D71354
-//address=195.154.119.113
-//port=33445
-//name=nurupo
-//userId=F404ABAA1C99A9D37D61AB54898F56793E1DEF8BD46B1038B9D822E8460FAB67
-//address=192.210.149.121
-//port=33445
-//name=Impyy
-//userId=788236D34978D1D5BD822F0A5BEBD2C53C64CC31CD3149350EE27D4D9A2F9B6B
-//address=178.62.250.138
-//port=33445
-//name=Manolis
-//userId=461FA3776EF0FA655F1A05477DF1B3B614F7D6B124F7DB1DD4FE3C08B03B640F
-//address=130.133.110.14
-//port=33445
-//name=noisykeyboard
-//userId=5918AC3C06955962A75AD7DF4F80A5D7C34F7DB9E1498D2E0495DE35B3FE8A57
-//address=104.167.101.29
-//port=33445
-//name=Busindre
-//userId=A179B09749AC826FF01F37A9613F6B57118AE014D4196A0E1105A98F93A54702
-//address=205.185.116.116
-//port=33445
-//name=Busindre
-//userId=1D5A5F2F5D6233058BF0259B09622FB40B482E4FA0931EB8FD3AB8E7BF7DAF6F
-//address=198.98.51.198
-//port=33445
-//name=ray65536
-//userId=8E7D0B859922EF569298B4D261A8CCB5FEA14FB91ED412A7603A585A25698832
-//address=108.61.165.198
-//port=33445
-//name=Kr9r0x
-//userId=C4CEB8C7AC607C6B374E2E782B3C00EA3A63B80D4910B8649CCACDD19F260819
-//address=212.71.252.109
-//port=33445
-//name=fluke571
-//userId=3CEE1F054081E7A011234883BC4FC39F661A55B73637A5AC293DDF1251D9432B
-//address=194.249.212.109
-//port=33445
-//name=MAH69K
-//userId=DA4E4ED4B697F2E9B000EEFE3A34B554ACD3F45F5C96EAEA2516DD7FF9AF7B43
-//address=185.25.116.107
-//port=33445
-//name=WIeschie
-//userId=6A4D0607A296838434A6A7DDF99F50EF9D60A2C510BBF31FE538A25CB6B4652F
-//address=192.99.168.140
-//port=33445
+	json.Unmarshal([]byte(serverListJSON), &DhtServerList)
+}
 
 //TODO: store the ip type because it might be tcp
 type Node struct {
 	PublicKey [gotox.PublicKeySize]byte
 	// TODO: don't assume a node has only one address?
 	Addr net.UDPAddr
+}
+
+func (n *Node) UnmarshalJSON(data []byte) error {
+	tmp := struct {
+		Name      string
+		PublicKey string
+		Addr      net.UDPAddr
+	}{}
+	err := json.Unmarshal([]byte(data), &tmp)
+	if err != nil {
+		return err
+	}
+	publicKey, err := hex.DecodeString(tmp.PublicKey)
+	if err != nil {
+		return err
+	}
+	copy(n.PublicKey[:], publicKey)
+	n.Addr = tmp.Addr
+	return nil
 }
 
 // TODO: rename SendbackData to RequestID
