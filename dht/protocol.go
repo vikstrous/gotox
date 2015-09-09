@@ -94,10 +94,10 @@ func init() {
 	json.Unmarshal([]byte(serverListJSON), &DhtServerList)
 }
 
-//TODO: store the ip type because it might be tcp
+//TODO: store the ip type because it might be tcp - It can't be TCP in the DHT...
 type Node struct {
 	PublicKey [gotox.PublicKeySize]byte
-	// TODO: don't assume a node has only one address?
+	// TODO: don't assume a node has only one address? - It does for now.
 	Addr net.UDPAddr
 }
 
@@ -205,8 +205,6 @@ func (sn *SendNodesIPv6) MarshalBinary() ([]byte, error) {
 }
 
 func (sn *SendNodesIPv6) UnmarshalBinary(data []byte) error {
-	// TODO: check length
-
 	log.Printf("sendNodesIPv6 data %v %d", data, len(data))
 	// number of nodes
 	numNodes := uint8(len(sn.Nodes))
@@ -229,6 +227,10 @@ func (sn *SendNodesIPv6) UnmarshalBinary(data []byte) error {
 			return err
 		}
 		offset += nodeSize
+	}
+
+	if len(data) != offset+8 {
+		return fmt.Errorf("Wrong length packet decrypted! Expected %d, got %d.", offset+8, len(data))
 	}
 
 	// sendback data
