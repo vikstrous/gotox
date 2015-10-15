@@ -178,7 +178,7 @@ func (sn *SendNodesIPv6) MarshalBinary() ([]byte, error) {
 	}
 
 	// number
-	err := binary.Write(buf, binary.LittleEndian, uint8(len(sn.Nodes)))
+	err := binary.Write(buf, binary.BigEndian, uint8(len(sn.Nodes)))
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +197,7 @@ func (sn *SendNodesIPv6) MarshalBinary() ([]byte, error) {
 	}
 
 	// sendback data
-	err = binary.Write(buf, binary.LittleEndian, sn.SendbackData)
+	err = binary.Write(buf, binary.BigEndian, sn.SendbackData)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (sn *SendNodesIPv6) UnmarshalBinary(data []byte) error {
 	log.Printf("sendNodesIPv6 data %v %d", data, len(data))
 	// number of nodes
 	numNodes := uint8(len(sn.Nodes))
-	binary.Read(bytes.NewReader(data), binary.LittleEndian, &numNodes)
+	binary.Read(bytes.NewReader(data), binary.BigEndian, &numNodes)
 
 	// nodes
 	sn.Nodes = make([]Node, numNodes)
@@ -234,7 +234,7 @@ func (sn *SendNodesIPv6) UnmarshalBinary(data []byte) error {
 	}
 
 	// sendback data
-	return binary.Read(bytes.NewReader(data[offset:]), binary.LittleEndian, &sn.SendbackData)
+	return binary.Read(bytes.NewReader(data[offset:]), binary.BigEndian, &sn.SendbackData)
 }
 
 func (n *Node) MarshalBinary() ([]byte, error) {
@@ -243,7 +243,7 @@ func (n *Node) MarshalBinary() ([]byte, error) {
 	var err error
 	if ipv4 := n.Addr.IP.To4(); ipv4 != nil {
 		// family 1 byte
-		err = binary.Write(buf, binary.LittleEndian, AF_INET)
+		err = binary.Write(buf, binary.BigEndian, AF_INET)
 		if err != nil {
 			return nil, err
 		}
@@ -254,7 +254,7 @@ func (n *Node) MarshalBinary() ([]byte, error) {
 		}
 	} else if ipv6 := n.Addr.IP.To16(); ipv6 != nil {
 		// family 1 byte
-		err = binary.Write(buf, binary.LittleEndian, AF_INET6)
+		err = binary.Write(buf, binary.BigEndian, AF_INET6)
 		if err != nil {
 			return nil, err
 		}
@@ -267,7 +267,7 @@ func (n *Node) MarshalBinary() ([]byte, error) {
 		return nil, fmt.Errorf("Invalid node address for node %v", n)
 	}
 	// port 2 bytes
-	err = binary.Write(buf, binary.LittleEndian, uint16(n.Addr.Port))
+	err = binary.Write(buf, binary.BigEndian, uint16(n.Addr.Port))
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func (n *Node) UnmarshalBinary(data []byte) error {
 
 	// port
 	var port uint16
-	err := binary.Read(bytes.NewReader(data[1+ipSize:]), binary.LittleEndian, &port)
+	err := binary.Read(bytes.NewReader(data[1+ipSize:]), binary.BigEndian, &port)
 	if err != nil {
 		return err
 	}
@@ -329,7 +329,7 @@ func (p *EncryptedPacket) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	// 1 byte message type
-	err := binary.Write(buf, binary.LittleEndian, p.Kind)
+	err := binary.Write(buf, binary.BigEndian, p.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -432,12 +432,12 @@ func (p *PingPong) MarshalBinary() ([]byte, error) {
 		kind = netPacketPingResponse
 	}
 	// request or respense
-	err := binary.Write(data, binary.LittleEndian, kind)
+	err := binary.Write(data, binary.BigEndian, kind)
 	if err != nil {
 		return nil, err
 	}
 	// pind id
-	err = binary.Write(data, binary.LittleEndian, p.PingID)
+	err = binary.Write(data, binary.BigEndian, p.PingID)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +456,7 @@ func (p *PingPong) UnmarshalBinary(data []byte) error {
 	} else {
 		return fmt.Errorf("Unknown ping type %d.", data[0])
 	}
-	return binary.Read(bytes.NewReader(data[1:]), binary.LittleEndian, &p.PingID)
+	return binary.Read(bytes.NewReader(data[1:]), binary.BigEndian, &p.PingID)
 }
 
 func (sn *GetNodes) MarshalBinary() ([]byte, error) {
@@ -467,7 +467,7 @@ func (sn *GetNodes) MarshalBinary() ([]byte, error) {
 		return nil, err
 	}
 	// sendback data
-	err = binary.Write(buf, binary.LittleEndian, sn.SendbackData)
+	err = binary.Write(buf, binary.BigEndian, sn.SendbackData)
 	if err != nil {
 		return nil, err
 	}
@@ -479,5 +479,5 @@ func (sn *GetNodes) UnmarshalBinary(data []byte) error {
 	//TODO: check length
 	sn.RequestedNodeID = new([gotox.PublicKeySize]byte)
 	copy(sn.RequestedNodeID[:], data[:gotox.PublicKeySize])
-	return binary.Read(bytes.NewReader(data[gotox.PublicKeySize:gotox.PublicKeySize+gotox.SendbackDataSize]), binary.LittleEndian, &sn.SendbackData)
+	return binary.Read(bytes.NewReader(data[gotox.PublicKeySize:gotox.PublicKeySize+gotox.SendbackDataSize]), binary.BigEndian, &sn.SendbackData)
 }

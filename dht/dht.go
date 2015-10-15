@@ -86,6 +86,7 @@ type DHT struct {
 	Friends map[[gotox.PublicKeySize]byte]Friend
 	// the closest 32 clients to us
 	CloseClients map[[gotox.PublicKeySize]byte]ClientData
+	AllNodes     map[[gotox.PublicKeySize]byte]Node
 }
 
 func New() (*DHT, error) {
@@ -118,12 +119,32 @@ func New() (*DHT, error) {
 	//dht.AddrToFriend = make(map[net.Addr][gotox.PublicKeySize]byte)
 	dht.Friends = make(map[[gotox.PublicKeySize]byte]Friend)
 	dht.CloseClients = make(map[[gotox.PublicKeySize]byte]ClientData)
+	dht.AllNodes = make(map[[gotox.PublicKeySize]byte]Node)
 
 	// TODO: set up pinger
+	go dht.pingerTask()
 
-	// TODO: add fakeFriendNumber friends
+	// TODO: add fakeFriendNumber friends (to get a bunch of neighbours throughout the dht)
 
 	return &dht, nil
+}
+
+// TODO: set up to communicate with it, make it thread safe
+func (dht *DHT) pingerTask() {
+	for {
+		fmt.Printf("pinging======== %d\n", len(dht.CloseClients))
+		for _, neighbour := range dht.CloseClients {
+			data, err := dht.PackPingPong(true, 1, &neighbour.PublicKey)
+			if err != nil {
+				fmt.Println(err)
+			}
+			err = dht.Send(data, &neighbour.Assoc4.Addr)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+		time.Sleep(5 * time.Second)
+	}
 }
 
 func randUint64() (uint64, error) {
@@ -154,6 +175,18 @@ func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *Ping
 			return err
 		}
 	} else {
+
+		// Got pong: send getnodes
+		fmt.Printf("sending getnodes to: %v at %v\n", *sender, *addr)
+		data, err := dht.PackGetNodes(sender, &dht.PublicKey)
+		if err != nil {
+			return err
+		}
+		err = dht.Send(data, addr)
+		if err != nil {
+			fmt.Println(err)
+		}
+
 		// we received a pong from a friend, so we should do nat hole punching stuff
 		// XXX: incomplete...
 		//num, err := randUint64()
@@ -161,17 +194,17 @@ func (dht *DHT) handlePingPong(sender *[gotox.PublicKeySize]byte, pingPong *Ping
 		//	return err
 		//}
 
-		friend, isFriend := dht.Friends[*sender]
-		if !isFriend {
-			return fmt.Errorf("Received pong from non-friend %v %v", *sender, pingPong)
-		}
+		//friend, isFriend := dht.Friends[*sender]
+		//if !isFriend {
+		//	return fmt.Errorf("Received pong from non-friend %v %v", *sender, pingPong)
+		//}
 		// TODO: check the ping id
 		// TODO: generate a ping id for nat punching
 		//if friend.Nat.NATPingID != pingPong.PingID {
 		//	return fmt.Errorf("Pong ID doesn't match ping ID. Replay detected? %d %d", friend.Nat.NATPingID, pingPong.PingID)
 		//}
 		//friend.Nat.NATPingID = num
-		friend.Nat.HolePunching = 1
+		//friend.Nat.HolePunching = 1
 
 	}
 	return nil
@@ -181,6 +214,7 @@ func (dht *DHT) handleGetNodes(sender *[gotox.PublicKeySize]byte, getNodes *GetN
 	if *sender == dht.PublicKey {
 		return fmt.Errorf("Rejected GetNodes from ourselves.")
 	}
+
 	data, err := dht.PackSendNodesIPv6(sender, getNodes.RequestedNodeID, getNodes.SendbackData)
 	if err != nil {
 		return err
@@ -190,7 +224,6 @@ func (dht *DHT) handleGetNodes(sender *[gotox.PublicKeySize]byte, getNodes *GetN
 	if err != nil {
 		return err
 	}
-
 	// TODO
 	//add_to_ping(dht->ping, packet + 1, source);
 
@@ -221,19 +254,19 @@ func addrEq(addr1, addr2 net.UDPAddr) bool {
 // the case for our own node is the same as for friends; friends have their own client list that we use to find them
 // This adds nodes to the list only if they are better than the ones we have available so far
 // Close is also known as client_list in toxcore
-func (dht *DHT) addToList(node *Node, clientList map[[gotox.PublicKeySize]byte]ClientData) error {
+func (dht *DHT) addToList(node *Node, clientList *map[[gotox.PublicKeySize]byte]ClientData) error {
 	ipv4 := node.Addr.IP.To4() != nil
 	now := time.Now()
 	// TODO: consider if we should have one ipv4 and one ipv6 address or just one which can be anything
 
 	// This updates or creates the client
-	clientData, found := clientList[node.PublicKey]
+	clientData, found := (*clientList)[node.PublicKey]
 	if !found {
 		// if the public key is missing but the port is in the list, change the public key for that entry
-		for k, v := range clientList {
+		for k, v := range *clientList {
 			if ipv4 && addrEq(v.Assoc4.Addr, node.Addr) || !ipv4 && addrEq(v.Assoc6.Addr, node.Addr) {
-				clientData = clientList[k]
-				delete(clientList, k)
+				clientData = (*clientList)[k]
+				delete(*clientList, k)
 				break
 			}
 		}
@@ -249,10 +282,11 @@ func (dht *DHT) addToList(node *Node, clientList map[[gotox.PublicKeySize]byte]C
 		clientData.Assoc6.Addr = node.Addr
 		clientData.Assoc6.Timestamp = now
 	}
-	clientList[node.PublicKey] = clientData
+	fmt.Println("added!")
+	(*clientList)[node.PublicKey] = clientData
 
-	if len(clientList) > gotox.MaxCloseClients {
-		log.Printf("Too many close clients! Must discard some... %d", len(clientList))
+	if len(*clientList) > gotox.MaxCloseClients {
+		log.Printf("Too many close clients! Must discard some... %d", len(*clientList))
 	}
 	// TODO if we are over the limit of nodes to add, replace the worst node (or the first bad one)
 	/* Replace a first bad (or empty) node with this one
@@ -271,11 +305,11 @@ func (dht *DHT) addToList(node *Node, clientList map[[gotox.PublicKeySize]byte]C
 	return nil
 }
 
-func setRetAddr(node *Node, closeClients map[[gotox.PublicKeySize]byte]ClientData) {
+func setRetAddr(node *Node, closeClients *map[[gotox.PublicKeySize]byte]ClientData) {
 	now := time.Now()
 	ipv4 := node.Addr.IP.To4() != nil
 	// find the client who told us about ourselves
-	for k, client := range closeClients {
+	for k, client := range *closeClients {
 		if client.PublicKey == node.PublicKey {
 			log.Printf("Found node: %v says %v is at %v", client.PublicKey, node.PublicKey, node.Addr)
 			if ipv4 {
@@ -285,49 +319,73 @@ func setRetAddr(node *Node, closeClients map[[gotox.PublicKeySize]byte]ClientDat
 				client.Assoc6.RetAddr = node.Addr
 				client.Assoc6.RetTimestamp = now
 			}
-			closeClients[k] = client
+			(*closeClients)[k] = client
 			break
 		}
 	}
 }
 
+func (dht *DHT) handleSendNodesIPv6Experiment(sender *[gotox.PublicKeySize]byte, sn *SendNodesIPv6, addr *net.UDPAddr) error {
+	log.Printf("Received SendNodesIPv6 -------------- : %v", sn)
+	for _, node := range sn.Nodes {
+		_, found := dht.AllNodes[node.PublicKey]
+		if !found {
+			fmt.Printf("sending ping to: %v at %v\n", node.PublicKey, node.Addr)
+			data, err := dht.PackPingPong(true, 1, &node.PublicKey)
+			if err != nil {
+				fmt.Println(err)
+			}
+			err = dht.Send(data, &node.Addr)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			dht.AllNodes[node.PublicKey] = node
+
+		}
+	}
+	fmt.Printf("Nodes count: %d\n", len(dht.AllNodes))
+	return nil
+}
+
 func (dht *DHT) handleSendNodesIPv6(sender *[gotox.PublicKeySize]byte, sn *SendNodesIPv6, addr *net.UDPAddr) error {
-	log.Printf("Received SendNodesIPv6: %v", sn)
+	log.Printf("Received %d SendNodesIPv6: %v\n", len(sn.Nodes), sn)
 	// TODO: check if we legitimately sent a request for these nodes by:
 	// looking up the ping id in the ping_array with sn.SendbackData
 	// checking that the source ip matches the one we messaged
 	// checking that the public key matches the one we messaged
 
 	for _, node := range sn.Nodes {
-		dht.addToList(&node, dht.CloseClients)
+		// XXX: actually, we should add them to allClients unconditionally, not closeClients... those are ones that we announce ourselves to
+		dht.addToList(&node, &dht.CloseClients)
 		log.Printf("We have %d CloseClients", len(dht.CloseClients))
 		for _, friend := range dht.Friends {
-			dht.addToList(&node, friend.CloseClients)
+			dht.addToList(&node, &friend.CloseClients)
 			log.Printf("%v has %d CloseClients", friend.PublicKey, len(friend.CloseClients))
 		}
 	}
 
 	// ping all new nodes
-	for _, node := range sn.Nodes {
-		// TODO: allocate a pingID
-		data, err := dht.PackPingPong(true, 1, &node.PublicKey)
-		if err != nil {
-			log.Printf("Error packing pingpong in handleSendNodesIPv6: %s", err)
-		}
-		err = dht.Send(data, &node.Addr)
-		if err != nil {
-			log.Printf("Error sending pingpong in handleSendNodesIPv6: %s", err)
-		}
-	}
+	//for _, node := range sn.Nodes {
+	//	// TODO: allocate a pingID
+	//	data, err := dht.PackPingPong(true, 1, &node.PublicKey)
+	//	if err != nil {
+	//		log.Printf("Error packing pingpong in handleSendNodesIPv6: %s", err)
+	//	}
+	//	err = dht.Send(data, &node.Addr)
+	//	if err != nil {
+	//		log.Printf("Error sending pingpong in handleSendNodesIPv6: %s", err)
+	//	}
+	//}
 	// process any results who are our direct friends
 	for _, node := range sn.Nodes {
 		if node.PublicKey == dht.PublicKey {
-			setRetAddr(&node, dht.CloseClients)
+			setRetAddr(&node, &dht.CloseClients)
 		}
 		for _, friend := range dht.Friends {
 			if friend.PublicKey == node.PublicKey {
 				// TODO: stop iterating through friends early if this succeeds
-				setRetAddr(&node, friend.CloseClients)
+				setRetAddr(&node, &friend.CloseClients)
 			}
 		}
 	}
@@ -357,6 +415,7 @@ func (dht *DHT) handlePacket(data []byte, addr *net.UDPAddr) error {
 		return dht.handlePingPong(plainPacket.Sender, payload, addr)
 	case *SendNodesIPv6:
 		return dht.handleSendNodesIPv6(plainPacket.Sender, payload, addr)
+		//return dht.handleSendNodesIPv6Experiment(plainPacket.Sender, payload, addr)
 	case *GetNodes:
 		return dht.handleGetNodes(plainPacket.Sender, payload, addr)
 	default:
@@ -365,7 +424,7 @@ func (dht *DHT) handlePacket(data []byte, addr *net.UDPAddr) error {
 }
 
 func (dht *DHT) Send(data []byte, addr *net.UDPAddr) error {
-	log.Printf("sending %v", data)
+	log.Printf("sending %d bytes to %v", len(data), *addr)
 	_, _, err := dht.Server.WriteMsgUDP(data, nil, addr)
 	return err
 }
@@ -440,13 +499,12 @@ func (dht *DHT) PackPacket(plainPacket *PlainPacket, publicKey *[gotox.PublicKey
 }
 
 func (dht *DHT) PackPingPong(isPing bool, pingID uint64, publicKey *[gotox.PublicKeySize]byte) ([]byte, error) {
-	pingPong := PingPong{
-		IsPing: isPing,
-		PingID: pingID,
-	}
 	plainPacket := PlainPacket{
-		Sender:  &dht.PublicKey,
-		Payload: &pingPong,
+		Sender: &dht.PublicKey,
+		Payload: &PingPong{
+			IsPing: isPing,
+			PingID: pingID,
+		},
 	}
 	return dht.PackPacket(&plainPacket, publicKey)
 }
@@ -473,7 +531,7 @@ func (dht *DHT) PackSendNodesIPv6(recipient, requestedNodeID *[gotox.PublicKeySi
 // getNodes sends a getnodes request to the target
 // TODO: implement sendback data? - it's used to prevent replay attacks - it can also be used to match requests with responses
 // TODO: see if we can actually receive the reply here... or we should receive be async
-func (dht *DHT) PackGetNodes(publicKey *[gotox.PublicKeySize]byte, queryKey [gotox.PublicKeySize]byte) ([]byte, error) {
+func (dht *DHT) PackGetNodes(publicKey *[gotox.PublicKeySize]byte, queryKey *[gotox.PublicKeySize]byte) ([]byte, error) {
 	if *publicKey == dht.PublicKey {
 		return nil, fmt.Errorf("Refusing to talk to myself.")
 	}
@@ -490,8 +548,8 @@ func (dht *DHT) PackGetNodes(publicKey *[gotox.PublicKeySize]byte, queryKey [got
 }
 
 func (dht *DHT) Bootstrap(node Node) error {
-	// we query ourselves to find the closest nodes to us
-	data, err := dht.PackGetNodes(&node.PublicKey, dht.PublicKey)
+	// we query ourselves to find where we need to advertise our public key
+	data, err := dht.PackGetNodes(&node.PublicKey, &dht.PublicKey)
 	if err != nil {
 		return err
 	}

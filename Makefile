@@ -7,7 +7,10 @@ all: utils
 test:
 	go test ./...
 
-utils: utils/dht_test
+utils: utils/dhttest utils/scan
 
-utils/dht_test:
+utils/dhttest: dht/*.go utils/dhttest.go
 	go build -o utils/dhttest utils/dhttest.go
+
+utils/scan: dht/*.go utils/scan.go
+	go build -o utils/scan utils/scan.go
