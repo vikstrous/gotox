@@ -143,7 +143,7 @@ func (dht *DHT) pingerTask() {
 				fmt.Println(err)
 			}
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 }
 
@@ -269,6 +269,16 @@ func (dht *DHT) addToList(node *Node, clientList *map[[gotox.PublicKeySize]byte]
 				delete(*clientList, k)
 				break
 			}
+		}
+
+		// if we are adding it for the first time, ping it
+		data, err := dht.PackPingPong(true, 1, &node.PublicKey)
+		if err != nil {
+			log.Printf("Error packing pingpong in handleSendNodesIPv6: %s", err)
+		}
+		err = dht.Send(data, &node.Addr)
+		if err != nil {
+			log.Printf("Error sending pingpong in handleSendNodesIPv6: %s", err)
 		}
 	}
 

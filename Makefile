@@ -1,16 +1,16 @@
 GO15VENDOREXPERIMENT=1
 
-.PHONY: test utils
+.PHONY: test utils bin/dhttest bin/scan
 
 all: utils
 
 test:
 	go test ./...
 
-utils: utils/dhttest utils/scan
+utils: bin/dhttest bin/scan
 
-utils/dhttest: dht/*.go utils/dhttest.go
-	go build -o utils/dhttest utils/dhttest.go
+bin/dhttest: dht/ utils/dhttest
+	go install ./utils/dhttest/
 
-utils/scan: dht/*.go utils/scan.go
-	go build -o utils/scan utils/scan.go
+bin/scan: dht/ utils/scan
+	go install ./utils/scan/
