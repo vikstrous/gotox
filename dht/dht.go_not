@@ -10,74 +10,127 @@ import (
 	"time"
 
 	"golang.org/x/crypto/nacl/box"
-	//"golang.org/x/crypto/nacl/secretbox"
 
 	"github.com/vikstrous/gotox"
 )
 
-func payloadSize(packetLength int) (int, error) {
-	return packetLength - gotox.PublicKeySize - gotox.NonceSize - box.Overhead - 1, nil
-}
-
-type NAT struct {
-	/* 1 if currently hole punching, otherwise 0 */
-	HolePunching   uint8
-	PunchingIndex  uint32
-	Tries          uint32
-	PunchingIndex2 uint32
-
-	PunchingTimestamp    uint64
-	RecvNATpingTimestamp uint64
-	//NATPingID            uint64
-	NATPingTimestamp uint64
-}
-
-type IPPTsPng struct {
-	Addr       net.UDPAddr // might not be udp?
-	Timestamp  time.Time
+type DHTPeerInfo struct {
 	LastPinged time.Time
-
-	// hardening Hardening
-
-	// This is a claim that the friend (or us) can be found at this address
-	RetAddr      net.UDPAddr
-	RetTimestamp time.Time
+	// TODO: store info about the health and quality of the peer
 }
 
-type ClientData struct {
-	PublicKey [gotox.PublicKeySize]byte
-	Assoc4    IPPTsPng
-	Assoc6    IPPTsPng
+// DHT implements receive
+type DHT struct {
+	Transport
+	// This would be relevant only for speeding up lookups of CloseClients, but the list is so small anyway
+	//AddrToFriend map[net.Addr][gotox.PublicKeySize]byte
+	Friends map[[gotox.PublicKeySize]byte]Friend
+	// the closest 32 clients to us - we don't need the whole Friend struct when tracking ourselves
+	CloseClients map[[gotox.PublicKeySize]byte]ClientData
+	// generally relevant info about a dht peer regardless of why we care about the peer
+	// we want to maintain a relationship with these
+	DHTPeerInfo map[[gotox.PublicKeySize]byte]DHTPeerInfo
 }
 
-type FriendCB func(data []byte, number int32, addr net.UDPAddr)
-
-type FriendCBInfo struct {
-	CB     FriendCB
-	Data   []byte // what is this for?
-	Number int32  // what is this for?
+func NewUserDHT() (*DHT, error) {
+	return NewDHT(GenerateIdentity())
 }
+
+func NewDHT(id Identity) (*DHT, error) {
+	transport := NewUDPTransport(id)
+
+	dht := DHT{
+		Transport:    transport,
+		Friends:      make(map[[gotox.PublicKeySize]byte]Friend),
+		CloseClients: make(map[[gotox.PublicKeySize]byte]ClientData),
+		DHTPeerInfo:  make(map[[gotox.PublicKeySize]byte]DHTPeerInfo),
+	}
+
+	//dht.AddrToFriend = make(map[net.Addr][gotox.PublicKeySize]byte)
+
+	go dht.pingerTask()
+
+	// TODO: add fakeFriendNumber friends (to get a bunch of neighbours throughout the dht)
+
+	return &dht, nil
+}
+
+func (dht *DHT) Receive(pp *PlainPacket, addr *net.UDPAddr) error {
+}
+
+// TODO: set up to communicate with it, make it thread safe
+func (dht *DHT) pingerTask() {
+	for {
+		// TODO: use timer channel instead
+		// XXX: figure out the "right" interval for this
+		fmt.Printf("pinging======== %d\n", len(dht.CloseClients))
+		for _, neighbour := range dht.CloseClients {
+			err := dht.transport.Send(&PingPong{
+				IsPing: true,
+				PingID: 1,
+			}, DHTPeer{&neighbour.PublicKey, &neighbour.Assoc4.Addr})
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+		time.Sleep(10 * time.Second)
+	}
+}
+
+//func payloadSize(packetLength int) (int, error) {
+//	return packetLength - gotox.PublicKeySize - gotox.NonceSize - box.Overhead - 1, nil
+//}
+
+//type NAT struct {
+//	/* 1 if currently hole punching, otherwise 0 */
+//	HolePunching   uint8
+//	PunchingIndex  uint32
+//	Tries          uint32
+//	PunchingIndex2 uint32
+//
+//	PunchingTimestamp    uint64
+//	RecvNATpingTimestamp uint64
+//	//NATPingID            uint64
+//	NATPingTimestamp uint64
+//}
+
+type DHTSearchResult struct {
+	Addr      net.UDPAddr
+	Timestamp time.Time
+}
+
+// one way to receive data from friends - callbacks? can we use channels?
+//type FriendCB func(data []byte, number int32, addr net.UDPAddr)
+
+//type FriendCBInfo struct {
+//	CB     FriendCB
+//	Data   []byte // what is this for?
+//	Number int32  // what is this for?
+//}
 
 type Friend struct {
-	PublicKey    [gotox.PublicKeySize]byte
-	CloseClients map[[gotox.PublicKeySize]byte]ClientData
+	PublicKey [gotox.PublicKeySize]byte
+	// the set of peers that are adjacent to this one is the keys of this struct
+	// data about them is stored centrally
+	DHTSearchResults map[[gotox.PublicKeySize]byte]DHTSearchResult
 
 	/* Time at which the last get_nodes request was sent. */
-	LastGetNode uint64 //??? by who?
+	//LastGetNode uint64 //??? by who?
 	/* number of times get_node packets were sent. */
-	BootstrapTimes uint32 //??
+	//BootstrapTimes uint32 //??
 
 	/* Symetric NAT hole punching stuff. */
-	Nat NAT
+	//Nat NAT
 
-	LockCount uint16
+	//LockCount uint16
 
-	FriendCBs []FriendCBInfo
+	//FriendCBs []FriendCBInfo
 }
+
+// OLD SHIT STARTS HERE ****************************
 
 type DHT struct {
 	Server       net.UDPConn
-	Request      chan bool
 	SymmetricKey [gotox.SymmetricKeySize]byte
 	PublicKey    [gotox.PublicKeySize]byte
 	PrivateKey   [gotox.PrivateKeySize]byte
@@ -110,7 +163,6 @@ func New() (*DHT, error) {
 
 	dht := DHT{
 		Server:       *listener,
-		Request:      make(chan bool),
 		SymmetricKey: symmetricKey,
 		PublicKey:    *publicKey,
 		PrivateKey:   *privateKey,
@@ -127,24 +179,6 @@ func New() (*DHT, error) {
 	// TODO: add fakeFriendNumber friends (to get a bunch of neighbours throughout the dht)
 
 	return &dht, nil
-}
-
-// TODO: set up to communicate with it, make it thread safe
-func (dht *DHT) pingerTask() {
-	for {
-		fmt.Printf("pinging======== %d\n", len(dht.CloseClients))
-		for _, neighbour := range dht.CloseClients {
-			data, err := dht.PackPingPong(true, 1, &neighbour.PublicKey)
-			if err != nil {
-				fmt.Println(err)
-			}
-			err = dht.Send(data, &neighbour.Assoc4.Addr)
-			if err != nil {
-				fmt.Println(err)
-			}
-		}
-		time.Sleep(10 * time.Second)
-	}
 }
 
 func randUint64() (uint64, error) {
@@ -239,16 +273,6 @@ func (dht *DHT) handleGetNodes(sender *[gotox.PublicKeySize]byte, getNodes *GetN
 	 */
 
 	return nil
-}
-
-func addrEq(addr1, addr2 net.UDPAddr) bool {
-	if !bytes.Equal(addr1.IP, addr2.IP) {
-		return false
-	}
-	if addr1.Port != addr2.Port {
-		return false
-	}
-	return true
 }
 
 // the case for our own node is the same as for friends; friends have their own client list that we use to find them
@@ -457,7 +481,6 @@ func (dht *DHT) Serve() {
 			// This is usually how we stop the server
 			// Do any necessary cleanup here.
 			//log.Fatal(err)
-			close(dht.Request)
 			return
 		}
 
@@ -470,7 +493,6 @@ func (dht *DHT) Serve() {
 			}
 		} else {
 			log.Printf("Received empty message")
-			close(dht.Request)
 			return
 		}
 		//TODO: look up peer in friends list
@@ -480,19 +502,6 @@ func (dht *DHT) Serve() {
 		//case <-s.request:
 		//}
 	}
-}
-
-// TODO: cache the shared key
-// TODO: use sequential nonces to avoid using too much randomness
-func (dht *DHT) encrypt(plain []byte, publicKey *[gotox.PublicKeySize]byte) (*[gotox.NonceSize]byte, []byte, error) {
-	nonce := [gotox.NonceSize]byte{}
-	// generate and write nonce
-	_, err := rand.Read(nonce[:])
-	if err != nil {
-		return nil, nil, err
-	}
-	encrypted := box.Seal(nil, plain, &nonce, publicKey, &dht.PrivateKey)
-	return &nonce, encrypted, nil
 }
 
 func (dht *DHT) PackPacket(plainPacket *PlainPacket, publicKey *[gotox.PublicKeySize]byte) ([]byte, error) {

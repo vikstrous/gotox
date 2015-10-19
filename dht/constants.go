@@ -28,10 +28,12 @@ var packedNodeSize = map[byte]uint{
 	TCP_INET6: packedNodeSizeIPv6,
 }
 
-const netPacketPingRequest uint8 = 0     /* Ping request packet ID. */
-const netPacketPingResponse uint8 = 1    /* Ping response packet ID. */
-const netPacketGetNodes uint8 = 2        /* Get nodes request packet ID. */
-const netPacketSendNodesIPv6 uint8 = 4   /* Send nodes response packet ID for other addresses. */
+const netPacketPing uint8 = 0 /* Ping request packet ID. */
+const netPacketPong uint8 = 1 /* Ping response packet ID. */
+// Node == DHTPeer
+const netPacketGetNodes uint8 = 2 /* Get nodes request packet ID. */
+// AKA SendNodesIPv6
+const netPacketGetNodesReply uint8 = 4   /* Send nodes response packet ID for other addresses. */
 const netPacketCookieRequest uint8 = 24  /* Cookie request packet */
 const netPacketCookieResponse uint8 = 25 /* Cookie response packet */
 const netPacketCryptoHs uint8 = 26       /* Crypto handshake packet */

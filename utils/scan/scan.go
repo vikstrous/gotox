@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 	//"net"
 
 	//"github.com/vikstrous/gotox"
@@ -9,13 +10,12 @@ import (
 )
 
 func main() {
-	dhtServer, err := dht.New()
+	scanner, err := dht.NewScanner()
 	if err != nil {
 		fmt.Printf("Failed to create server %s.\n", err)
 		return
 	}
-	go dhtServer.Serve()
-	defer dhtServer.Stop()
+	go scanner.Listen()
 
 	//for _, server := range dht.DhtServerList[:5] {
 	//	data, err := dhtServer.PackPingPong(true, 1, &server.PublicKey)
@@ -45,17 +45,14 @@ func main() {
 	//}
 
 	for _, server := range dht.DhtServerList[:5] {
-		data, err := dhtServer.PackGetNodes(&server.PublicKey, &server.PublicKey)
-		if err != nil {
-			fmt.Printf("error %s\n", err)
-			return
-		}
-		err = dhtServer.Send(data, &server.Addr)
+		err := scanner.Send(&dht.GetNodes{
+			RequestedNodeID: &server.PublicKey,
+		}, &server)
 		if err != nil {
 			fmt.Printf("error %s\n", err)
 			return
 		}
 	}
 
-	<-dhtServer.Request
+	time.Sleep(time.Hour * 1000000)
 }

@@ -6,16 +6,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	//"log"
 	"net"
 
-	"golang.org/x/crypto/nacl/box"
 	//"golang.org/x/crypto/nacl/secretbox"
 
 	"github.com/vikstrous/gotox"
 )
 
-var DhtServerList []Node
+var DhtServerList []DHTPeer
+
+type DHTPeer struct {
+	PublicKey [gotox.PublicKeySize]byte
+	Addr      net.UDPAddr
+}
 
 func init() {
 	serverListJSON := `[
@@ -94,14 +98,7 @@ func init() {
 	json.Unmarshal([]byte(serverListJSON), &DhtServerList)
 }
 
-//TODO: store the ip type because it might be tcp - It can't be TCP in the DHT...
-type Node struct {
-	PublicKey [gotox.PublicKeySize]byte
-	// TODO: don't assume a node has only one address? - It does for now.
-	Addr net.UDPAddr
-}
-
-func (n *Node) UnmarshalJSON(data []byte) error {
+func (n *DHTPeer) UnmarshalJSON(data []byte) error {
 	tmp := struct {
 		Name      string
 		PublicKey string
@@ -126,8 +123,8 @@ type GetNodes struct {
 	SendbackData    uint64
 }
 
-type SendNodesIPv6 struct {
-	Nodes        []Node
+type GetNodesReply struct {
+	Nodes        []DHTPeer
 	SendbackData uint64
 }
 
@@ -138,14 +135,15 @@ type EncryptedPacket struct {
 	Payload []byte
 }
 
-type BinaryMarshalable interface {
+type Payload interface {
+	Kind() uint8
 	MarshalBinary() (data []byte, err error)
 	UnmarshalBinary(data []byte) error
 }
 
 type PlainPacket struct {
 	Sender  *[gotox.PublicKeySize]byte
-	Payload BinaryMarshalable
+	Payload Payload
 }
 
 // TODO: rename PingID to RequestID
@@ -171,7 +169,7 @@ type PingPong struct {
 //[ip (in network byte order), length=4 bytes if ipv4, 16 bytes if ipv6]
 //[port (in network byte order), length=2 bytes]
 
-func (sn *SendNodesIPv6) MarshalBinary() ([]byte, error) {
+func (sn *GetNodesReply) MarshalBinary() ([]byte, error) {
 	buf := new(bytes.Buffer)
 	if len(sn.Nodes) > 4 {
 		return nil, fmt.Errorf("Attempt to send too many nodes in reply: %d", len(sn.Nodes))
@@ -204,14 +202,18 @@ func (sn *SendNodesIPv6) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), err
 }
 
-func (sn *SendNodesIPv6) UnmarshalBinary(data []byte) error {
-	log.Printf("sendNodesIPv6 data %v %d", data, len(data))
+func (sn *GetNodesReply) Kind() uint8 {
+	return netPacketGetNodesReply
+}
+
+func (sn *GetNodesReply) UnmarshalBinary(data []byte) error {
+	//log.Printf("GetNodesReply data %v %d", data, len(data))
 	// number of nodes
 	numNodes := uint8(len(sn.Nodes))
 	binary.Read(bytes.NewReader(data), binary.BigEndian, &numNodes)
 
 	// nodes
-	sn.Nodes = make([]Node, numNodes)
+	sn.Nodes = make([]DHTPeer, numNodes)
 	offset := 1
 	for n := uint8(0); n < numNodes; n++ {
 		var nodeSize int
@@ -237,7 +239,7 @@ func (sn *SendNodesIPv6) UnmarshalBinary(data []byte) error {
 	return binary.Read(bytes.NewReader(data[offset:]), binary.BigEndian, &sn.SendbackData)
 }
 
-func (n *Node) MarshalBinary() ([]byte, error) {
+func (n *DHTPeer) MarshalBinary() ([]byte, error) {
 	// TODO: support TCP
 	buf := new(bytes.Buffer)
 	var err error
@@ -279,12 +281,12 @@ func (n *Node) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (n *Node) UnmarshalBinary(data []byte) error {
+func (n *DHTPeer) UnmarshalBinary(data []byte) error {
 	if len(data) != packedNodeSizeIPv4 && len(data) != packedNodeSizeIPv6 {
 		return fmt.Errorf("Wrong size data for node %d", len(data))
 	}
 
-	log.Printf("parsing %v %d", data, len(data))
+	//log.Printf("parsing %v %d", data, len(data))
 	// ip type
 	ipType := data[0]
 
@@ -355,81 +357,13 @@ func (p *EncryptedPacket) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// TODO: cache the shared key
-// TODO: use sequential nonces to avoid using too much randomness
-func (dht *DHT) encryptPacket(plain *PlainPacket, publicKey *[gotox.PublicKeySize]byte) (*EncryptedPacket, error) {
-	var kind uint8
-	switch pl := plain.Payload.(type) {
-	case *PingPong:
-		if pl.IsPing {
-			kind = netPacketPingRequest
-		} else {
-			kind = netPacketPingResponse
-		}
-	case *GetNodes:
-		kind = netPacketGetNodes
-	case *SendNodesIPv6:
-		kind = netPacketSendNodesIPv6
-	default:
-		return nil, fmt.Errorf("Internal error. Unknown payload type.")
-	}
-	encrypted := EncryptedPacket{
-		Kind:   kind,
-		Sender: plain.Sender,
-	}
-	// binary encode the data
-	payload, err := plain.Payload.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-	// encrypt payload into encrypted.Payload
-	nonce, cyphertext, err := dht.encrypt(payload, publicKey)
-	if err != nil {
-		return nil, err
-	}
-	encrypted.Nonce = nonce
-	encrypted.Payload = cyphertext
-	return &encrypted, nil
-}
-
-func (dht *DHT) decryptPacket(encrypted *EncryptedPacket) (*PlainPacket, error) {
-	plain := PlainPacket{
-		Sender: encrypted.Sender,
-	}
-	switch encrypted.Kind {
-	case netPacketPingRequest:
-		plain.Payload = &PingPong{}
-	case netPacketPingResponse:
-		plain.Payload = &PingPong{}
-	case netPacketGetNodes:
-		plain.Payload = &GetNodes{}
-	case netPacketSendNodesIPv6:
-		plain.Payload = &SendNodesIPv6{}
-	default:
-		return nil, fmt.Errorf("Unknown packet type %d.", encrypted.Kind)
-	}
-
-	plainPayload, success := box.Open(nil, encrypted.Payload, encrypted.Nonce, encrypted.Sender, &dht.PrivateKey)
-	if !success {
-		return nil, fmt.Errorf("Failed to decrypt.")
-	}
-
-	// decrypt payload
-	err := plain.Payload.UnmarshalBinary(plainPayload)
-	if err != nil {
-		return nil, err
-	}
-
-	return &plain, nil
-}
-
 func (p *PingPong) MarshalBinary() ([]byte, error) {
 	data := new(bytes.Buffer)
 	var kind uint8
 	if p.IsPing {
-		kind = netPacketPingRequest
+		kind = netPacketPing
 	} else {
-		kind = netPacketPingResponse
+		kind = netPacketPong
 	}
 	// request or respense
 	err := binary.Write(data, binary.BigEndian, kind)
@@ -445,13 +379,21 @@ func (p *PingPong) MarshalBinary() ([]byte, error) {
 	return data.Bytes(), nil
 }
 
+func (p *PingPong) Kind() uint8 {
+	if p.IsPing {
+		return netPacketPing
+	} else {
+		return netPacketPong
+	}
+}
+
 func (p *PingPong) UnmarshalBinary(data []byte) error {
 	if len(data) < 1+8 {
 		return fmt.Errorf("Wrong size data for ping %d.", len(data))
 	}
-	if data[0] == netPacketPingRequest {
+	if data[0] == netPacketPing {
 		p.IsPing = true
-	} else if data[0] == netPacketPingResponse {
+	} else if data[0] == netPacketPong {
 		p.IsPing = false
 	} else {
 		return fmt.Errorf("Unknown ping type %d.", data[0])
@@ -473,6 +415,10 @@ func (sn *GetNodes) MarshalBinary() ([]byte, error) {
 	}
 	// finalize message to be encrypted
 	return buf.Bytes(), nil
+}
+
+func (sn *GetNodes) Kind() uint8 {
+	return netPacketGetNodes
 }
 
 func (sn *GetNodes) UnmarshalBinary(data []byte) error {
