@@ -23,7 +23,7 @@ func init() {
 }
 
 func testEncryptDecrypt(t *testing.T, id *Identity, pp *PlainPacket) {
-	ep, err := EncryptPacket(pp, &id.PublicKey, &id.PrivateKey)
+	ep, err := id.EncryptPacket(pp, &id.PublicKey)
 	if err != nil {
 		t.Fatalf("Failed to encrypt. %s", err)
 	}
@@ -36,7 +36,7 @@ func testEncryptDecrypt(t *testing.T, id *Identity, pp *PlainPacket) {
 	if err != nil {
 		t.Fatalf("Failed to unmarshal encrypted data. %s", err)
 	}
-	pp2, err := DecryptPacket(ep2, &id.PrivateKey)
+	pp2, err := id.DecryptPacket(ep2)
 	if err != nil {
 		t.Fatalf("Failed to decrypt encrypted packet. %s", err)
 	}
@@ -79,7 +79,7 @@ func TestGetNodesReply5(t *testing.T) {
 		node,
 		node},
 		5}}
-	_, err := EncryptPacket(pp, &TestIdentity.PublicKey, &TestIdentity.PrivateKey)
+	_, err := TestIdentity.EncryptPacket(pp, &TestIdentity.PublicKey)
 	if err == nil {
 		t.Fatalf("Should not have succeed in encrypting with too many nodes in GetNodes.")
 	}

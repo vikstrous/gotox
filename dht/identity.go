@@ -37,8 +37,7 @@ func GenerateIdentity() (*Identity, error) {
 	return &id, nil
 }
 
-// TODO: make EncryptPacket, Encrypt, DecryptPacket methods on an Identity
-func EncryptPacket(plain *PlainPacket, publicKey *[gotox.PublicKeySize]byte, privateKey *[gotox.PrivateKeySize]byte) (*EncryptedPacket, error) {
+func (id *Identity) EncryptPacket(plain *PlainPacket, publicKey *[gotox.PublicKeySize]byte) (*EncryptedPacket, error) {
 	encrypted := EncryptedPacket{
 		Kind:   plain.Payload.Kind(),
 		Sender: plain.Sender,
@@ -49,7 +48,7 @@ func EncryptPacket(plain *PlainPacket, publicKey *[gotox.PublicKeySize]byte, pri
 		return nil, err
 	}
 	// encrypt payload into encrypted.Payload
-	nonce, cyphertext, err := Encrypt(payload, publicKey, privateKey)
+	nonce, cyphertext, err := id.Encrypt(payload, publicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -59,18 +58,18 @@ func EncryptPacket(plain *PlainPacket, publicKey *[gotox.PublicKeySize]byte, pri
 }
 
 // TODO: cache the shared key
-func Encrypt(plain []byte, publicKey *[gotox.PublicKeySize]byte, privateKey *[gotox.PrivateKeySize]byte) (*[gotox.NonceSize]byte, []byte, error) {
+func (id *Identity) Encrypt(plain []byte, publicKey *[gotox.PublicKeySize]byte) (*[gotox.NonceSize]byte, []byte, error) {
 	nonce := [gotox.NonceSize]byte{}
 	// generate and write nonce
 	_, err := rand.Read(nonce[:])
 	if err != nil {
 		return nil, nil, err
 	}
-	encrypted := box.Seal(nil, plain, &nonce, publicKey, privateKey)
+	encrypted := box.Seal(nil, plain, &nonce, publicKey, &id.PrivateKey)
 	return &nonce, encrypted, nil
 }
 
-func DecryptPacket(encrypted *EncryptedPacket, privateKey *[gotox.PrivateKeySize]byte) (*PlainPacket, error) {
+func (id *Identity) DecryptPacket(encrypted *EncryptedPacket) (*PlainPacket, error) {
 	plain := PlainPacket{
 		Sender: encrypted.Sender,
 	}
@@ -87,7 +86,7 @@ func DecryptPacket(encrypted *EncryptedPacket, privateKey *[gotox.PrivateKeySize
 		return nil, fmt.Errorf("Unknown packet type %d.", encrypted.Kind)
 	}
 
-	plainPayload, success := box.Open(nil, encrypted.Payload, encrypted.Nonce, encrypted.Sender, privateKey)
+	plainPayload, success := box.Open(nil, encrypted.Payload, encrypted.Nonce, encrypted.Sender, &id.PrivateKey)
 	if !success {
 		return nil, fmt.Errorf("Failed to decrypt.")
 	}

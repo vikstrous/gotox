@@ -42,7 +42,7 @@ func (t *UDPTransport) Send(payload Payload, dest *DHTPeer) error {
 		Payload: payload,
 	}
 
-	encryptedPacket, err := EncryptPacket(&plainPacket, &dest.PublicKey, &t.Identity.PrivateKey)
+	encryptedPacket, err := t.Identity.EncryptPacket(&plainPacket, &dest.PublicKey)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func (t *UDPTransport) Listen() {
 				log.Printf("error receiving: %v", err)
 				continue
 			}
-			plainPacket, err := DecryptPacket(&encryptedPacket, &t.Identity.PrivateKey)
+			plainPacket, err := t.Identity.DecryptPacket(&encryptedPacket)
 			if err != nil {
 				log.Printf("error receiving: %v", err)
 				continue
