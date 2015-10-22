@@ -7,11 +7,11 @@ all: utils
 test:
 	go test ./...
 
-utils: bin/scan
+#utils: bin/scan
 #bin/dhttest 
 
 #bin/dhttest: dht/ utils/dhttest
 #	go install ./utils/dhttest/
 
-bin/scan: dht/ utils/scan
-	go install ./utils/scan/
+#bin/scan: dht/ utils/scan
+#	go install ./utils/scan/
