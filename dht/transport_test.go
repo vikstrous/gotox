@@ -37,8 +37,8 @@ func TestReceive(t *testing.T) {
 			if payload.IsPing != true {
 				t.Fatalf("Was not ping: %b", payload.IsPing)
 			}
-			if payload.PingID != 3 {
-				t.Fatalf("Wrong pingID: %d", payload.PingID)
+			if payload.RequestID != 3 {
+				t.Fatalf("Wrong pingID: %d", payload.RequestID)
 			}
 		default:
 			t.Fatalf("Internal error. Failed to handle payload of parsed packet. %d", pp.Payload.Kind())
@@ -49,7 +49,7 @@ func TestReceive(t *testing.T) {
 
 	// pipe the output of transport2 into the input of transport1
 	transport2.ChOut = transport1.ChIn
-	transport2.Send(&PingPong{IsPing: true, PingID: 3}, &DHTPeer{PublicKey: id1.PublicKey})
+	transport2.Send(&PingPong{IsPing: true, RequestID: 3}, &DHTPeer{PublicKey: id1.PublicKey})
 
 	// process the message
 	transport1.Listen()

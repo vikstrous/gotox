@@ -6,10 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	//"log"
 	"net"
-
-	//"golang.org/x/crypto/nacl/secretbox"
 
 	"github.com/vikstrous/gotox"
 )
@@ -117,10 +114,9 @@ func (n *DHTPeer) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// TODO: rename SendbackData to RequestID
 type GetNodes struct {
 	RequestedNodeID *[gotox.PublicKeySize]byte
-	SendbackData    uint64
+	RequestID       uint64
 }
 
 type GetNodesReply struct {
@@ -146,10 +142,9 @@ type PlainPacket struct {
 	Payload Payload
 }
 
-// TODO: rename PingID to RequestID
 type PingPong struct {
-	IsPing bool
-	PingID uint64
+	IsPing    bool
+	RequestID uint64
 }
 
 // packedNodeSizeIp6
@@ -290,16 +285,17 @@ func (n *DHTPeer) UnmarshalBinary(data []byte) error {
 	// ip type
 	ipType := data[0]
 
-	var ipSize int
 	// confirm ip type
+	var ipSize int
 	if ipType == AF_INET || ipType == TCP_INET {
-		ipSize = 4
+		ipSize = net.IPv4len
+		n.Addr.IP = net.IPv4(data[1], data[2], data[3], data[4])
 	} else if ipType == AF_INET6 || ipType == TCP_INET6 {
-		ipSize = 16
+		ipSize = net.IPv6len
+		n.Addr.IP = data[1 : ipSize+1]
 	} else {
 		return fmt.Errorf("Unknown ip type %d", ipType)
 	}
-	n.Addr.IP = data[1 : 1+ipSize]
 
 	// port
 	var port uint16
@@ -371,7 +367,7 @@ func (p *PingPong) MarshalBinary() ([]byte, error) {
 		return nil, err
 	}
 	// pind id
-	err = binary.Write(data, binary.BigEndian, p.PingID)
+	err = binary.Write(data, binary.BigEndian, p.RequestID)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +394,7 @@ func (p *PingPong) UnmarshalBinary(data []byte) error {
 	} else {
 		return fmt.Errorf("Unknown ping type %d.", data[0])
 	}
-	return binary.Read(bytes.NewReader(data[1:]), binary.BigEndian, &p.PingID)
+	return binary.Read(bytes.NewReader(data[1:]), binary.BigEndian, &p.RequestID)
 }
 
 func (sn *GetNodes) MarshalBinary() ([]byte, error) {
@@ -409,7 +405,7 @@ func (sn *GetNodes) MarshalBinary() ([]byte, error) {
 		return nil, err
 	}
 	// sendback data
-	err = binary.Write(buf, binary.BigEndian, sn.SendbackData)
+	err = binary.Write(buf, binary.BigEndian, sn.RequestID)
 	if err != nil {
 		return nil, err
 	}
@@ -425,5 +421,5 @@ func (sn *GetNodes) UnmarshalBinary(data []byte) error {
 	//TODO: check length
 	sn.RequestedNodeID = new([gotox.PublicKeySize]byte)
 	copy(sn.RequestedNodeID[:], data[:gotox.PublicKeySize])
-	return binary.Read(bytes.NewReader(data[gotox.PublicKeySize:gotox.PublicKeySize+gotox.SendbackDataSize]), binary.BigEndian, &sn.SendbackData)
+	return binary.Read(bytes.NewReader(data[gotox.PublicKeySize:gotox.PublicKeySize+gotox.SendbackDataSize]), binary.BigEndian, &sn.RequestID)
 }
