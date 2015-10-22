@@ -13,9 +13,7 @@ import (
 
 type PeerInfo struct {
 	DHTPeer
-	LastGetNodes time.Time
-	NumReplies   int
-	NumRequests  int
+	NumRequests int
 }
 
 // Scanner implements receive
@@ -24,7 +22,6 @@ type Scanner struct {
 	// this holds all nodes discovered
 	AllPeersMutex sync.Mutex
 	AllPeers      map[[gotox.PublicKeySize]byte]PeerInfo
-	LastFullScan  time.Time
 }
 
 func NewScanner() (*Scanner, error) {
@@ -51,7 +48,6 @@ func NewScanner() (*Scanner, error) {
 
 func (s *Scanner) pingerTask() {
 	for {
-		// TODO: use timer channel instead
 		// XXX: figure out the "right" interval for this
 		numPeers := len(s.AllPeers)
 		fmt.Printf("peers: %d\n", numPeers)
@@ -59,6 +55,7 @@ func (s *Scanner) pingerTask() {
 		s.AllPeersMutex.Lock()
 		done := true
 		for _, neighbour := range s.AllPeers {
+			// scan only ipv4
 			if neighbour.Addr.IP.To4() != nil {
 				if neighbour.NumRequests < 10 {
 					done = false
@@ -97,14 +94,11 @@ func (s *Scanner) pingerTask() {
 func (s *Scanner) Receive(pp *PlainPacket, addr *net.UDPAddr) error {
 	switch payload := pp.Payload.(type) {
 	case *GetNodesReply:
+		// There are only 4 replies
 		s.AllPeersMutex.Lock()
-		sender, found := s.AllPeers[*pp.Sender]
-		if found {
-			sender.NumReplies++
-			s.AllPeers[*pp.Sender] = sender
-		}
 		for _, node := range payload.Nodes {
 			peer, found := s.AllPeers[node.PublicKey]
+			// prefer ipv4
 			if !found {
 				s.AllPeers[node.PublicKey] = PeerInfo{DHTPeer: DHTPeer{node.PublicKey, node.Addr}}
 			} else {
