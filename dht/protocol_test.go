@@ -17,8 +17,40 @@ func init() {
 	copy(qToxPublicKey[:], publicKeySlice)
 }
 
+// Scanner implements receive
+type TestReceiver struct {
+	Transport
+}
+
+func NewTestReceiver() (*TestReceiver, error) {
+	id, err := GenerateIdentity()
+	if err != nil {
+		return nil, err
+	}
+	transport, err := NewLocalTransport(id)
+	if err != nil {
+		return nil, err
+	}
+	s := TestReceiver{
+		Transport: transport,
+	}
+	transport.RegisterReceiver(&s)
+
+	return &s, nil
+}
+
+func (s *TestReceiver) Receive(pp *PlainPacket, addr *net.UDPAddr) error {
+	switch payload := pp.Payload.(type) {
+	case *GetNodesReply:
+
+	default:
+		return fmt.Errorf("Internal error. Failed to handle payload of parsed packet. %d", pp.Payload.Kind())
+	}
+	return nil
+}
+
 func TestPing(t *testing.T) {
-	dht, err := New()
+	dht, err := NewDHT()
 	if err != nil {
 		t.Fatalf("Failed to create server %s.", err)
 	}
