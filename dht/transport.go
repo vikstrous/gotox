@@ -9,21 +9,19 @@ import (
 //  Transport/Sender[with identity].Send()
 //  Application whatever -> Transport/Sender[with identity].Send()
 
-type Receiver interface {
-	Receive(pp *PlainPacket, addr *net.UDPAddr) error
-}
+// return true to terminate the listener
+type ReceiveFunc func(*PlainPacket, *net.UDPAddr) bool
 
 type Transport interface {
 	Send(payload Payload, dest *DHTPeer) error
-	// TODO: set up a way to cleanly shut down, etc.
 	Listen()
-	RegisterReceiver(receiver Receiver)
+	RegisterReceiver(receiver ReceiveFunc)
 }
 
 type UDPTransport struct {
-	Server   net.UDPConn
-	Identity *Identity
-	Receiver Receiver
+	Server      net.UDPConn
+	Identity    *Identity
+	ReceiveFunc ReceiveFunc
 }
 
 func NewUDPTransport(id *Identity) (*UDPTransport, error) {
@@ -85,10 +83,10 @@ func (t *UDPTransport) Listen() {
 				log.Printf("error receiving: %v", err)
 				continue
 			}
-			t.Receiver.Receive(plainPacket, addr)
-			if err != nil {
-				log.Printf("Error handling message received: %v", err)
-				continue
+			terminate := t.ReceiveFunc(plainPacket, addr)
+			if terminate {
+				log.Printf("Clean termination.")
+				return
 			}
 		} else {
 			log.Printf("Received empty message???")
@@ -97,6 +95,6 @@ func (t *UDPTransport) Listen() {
 	}
 }
 
-func (t *UDPTransport) RegisterReceiver(receiver Receiver) {
-	t.Receiver = receiver
+func (t *UDPTransport) RegisterReceiver(receiver ReceiveFunc) {
+	t.ReceiveFunc = receiver
 }

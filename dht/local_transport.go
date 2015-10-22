@@ -6,10 +6,10 @@ import (
 )
 
 type LocalTransport struct {
-	ChOut    *chan []byte
-	ChIn     *chan []byte
-	Identity *Identity
-	Receiver Receiver
+	ChOut       *chan []byte
+	ChIn        *chan []byte
+	Identity    *Identity
+	ReceiveFunc ReceiveFunc
 }
 
 func NewLocalTransport(id *Identity) (*LocalTransport, error) {
@@ -55,14 +55,14 @@ func (t *LocalTransport) Listen() {
 			log.Printf("error receiving: %v", err)
 			continue
 		}
-		t.Receiver.Receive(plainPacket, &net.UDPAddr{})
-		if err != nil {
-			log.Printf("Error handling message received: %v", err)
-			continue
+		terminate := t.ReceiveFunc(plainPacket, &net.UDPAddr{})
+		if terminate {
+			log.Printf("Clean termination.")
+			return
 		}
 	}
 }
 
-func (t *LocalTransport) RegisterReceiver(receiver Receiver) {
-	t.Receiver = receiver
+func (t *LocalTransport) RegisterReceiver(receiver ReceiveFunc) {
+	t.ReceiveFunc = receiver
 }

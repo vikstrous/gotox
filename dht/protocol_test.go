@@ -2,8 +2,7 @@ package dht
 
 import (
 	"encoding/hex"
-	"net"
-	//"reflect"
+	"reflect"
 	"testing"
 
 	"github.com/vikstrous/gotox"
@@ -17,149 +16,127 @@ func init() {
 	copy(qToxPublicKey[:], publicKeySlice)
 }
 
-// Scanner implements receive
-type TestReceiver struct {
-	Transport
-}
-
-func NewTestReceiver() (*TestReceiver, error) {
+func TestPing(t *testing.T) {
 	id, err := GenerateIdentity()
 	if err != nil {
-		return nil, err
+		t.Errorf("Failed to generate identity. %s", err)
 	}
-	transport, err := NewLocalTransport(id)
+
+	pp := &PlainPacket{Sender: &id.PublicKey, Payload: &PingPong{true, 1}}
+	ep, err := EncryptPacket(pp, &id.PublicKey, &id.PrivateKey)
 	if err != nil {
-		return nil, err
+		t.Errorf("Failed to encrypt pingpong. %s", err)
 	}
-	s := TestReceiver{
-		Transport: transport,
-	}
-	transport.RegisterReceiver(&s)
-
-	return &s, nil
-}
-
-func (s *TestReceiver) Receive(pp *PlainPacket, addr *net.UDPAddr) error {
-	switch payload := pp.Payload.(type) {
-	case *GetNodesReply:
-
-	default:
-		return fmt.Errorf("Internal error. Failed to handle payload of parsed packet. %d", pp.Payload.Kind())
-	}
-	return nil
-}
-
-func TestPing(t *testing.T) {
-	dht, err := NewDHT()
+	data, err := ep.MarshalBinary()
 	if err != nil {
-		t.Fatalf("Failed to create server %s.", err)
-	}
-	node := Node{
-		Addr: net.UDPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 1234,
-		},
-		PublicKey: dht.PublicKey,
-	}
-
-	data, err := dht.PackPingPong(true, 1, &node.PublicKey)
-	if err != nil {
-		t.Errorf("Failed to build getNodes. %s", err)
+		t.Errorf("Failed to marshal encrypted data. %s", err)
 	}
 	if len(data) != 1+32+24+1+8+box.Overhead {
 		t.Errorf("Marshaled getNode is %d instead of 97, %v", len(data), data)
 	}
-}
-
-func TestGetNodes(t *testing.T) {
-	dht, err := New()
+	ep2 := &EncryptedPacket{}
+	err = ep2.UnmarshalBinary(data)
 	if err != nil {
-		t.Fatalf("Failed to create server %s.", err)
+		t.Errorf("Failed to unmarshal encrypted data. %s", err)
 	}
-	node := Node{
-		Addr: net.UDPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 1234,
-		},
-		PublicKey: qToxPublicKey,
-	}
-
-	data, err := dht.PackGetNodes(&node.PublicKey, &qToxPublicKey)
+	pp2, err := DecryptPacket(ep2, &id.PrivateKey)
 	if err != nil {
-		t.Errorf("Failed to build getNodes. %s", err)
+		t.Errorf("Failed to decrypt encrypted packet. %s", err)
 	}
-	if len(data) != 113 {
-		t.Errorf("Marshaled getNode is %d instead of 97, %v", len(data), data)
+	if !reflect.DeepEqual(pp2, pp) {
+		t.Errorf("Mismatch after decryption. %v from %v VS %v from %v", pp.Payload, pp.Sender, pp2.Payload, pp2.Sender)
 	}
 }
 
-func TestMarshalNode(t *testing.T) {
-	node := Node{
-		Addr: net.UDPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 1234,
-		},
-		PublicKey: qToxPublicKey,
-	}
-	data, err := node.MarshalBinary()
-	if err != nil {
-		t.Errorf("Failed to marsha node. %s", err)
-	}
-	if len(data) != 39 {
-		t.Errorf("Marshaled node is %d instead of 39, %v", len(data), data)
-	}
-
-	node6 := Node{
-		Addr: net.UDPAddr{
-			IP:   net.ParseIP("::1"),
-			Port: 1234,
-		},
-		PublicKey: qToxPublicKey,
-	}
-	data, err = node6.MarshalBinary()
-	if err != nil {
-		t.Errorf("Failed to marshel node. %s", err)
-	}
-	if len(data) != 51 {
-		t.Errorf("Marshaled node is %d instead of 51, %v", len(data), data)
-	}
-	var node62 Node
-	err = node62.UnmarshalBinary(data)
-	if err != nil {
-		t.Errorf("Failed to marshel node. %s", err)
-	}
-	// DeepEqual doesn't work on ip addresses
-	//if !reflect.DeepEqual(node6, node62) {
-	//	t.Errorf("Failed to unmarshal\n%v\n%v\n%v\n", node6, data, node62)
-	//}
-}
-
-func TestMarshalSendNodesIPv6(t *testing.T) {
-	node := Node{
-		Addr: net.UDPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 1234,
-		},
-		PublicKey: qToxPublicKey,
-	}
-	sendNodesIPv6 := SendNodesIPv6{
-		Nodes:        []Node{node},
-		SendbackData: 1,
-	}
-	data, err := sendNodesIPv6.MarshalBinary()
-	if err != nil {
-		t.Errorf("Failed to marshel node. %s", err)
-	}
-	if len(data) != 48 {
-		t.Errorf("Marshaled node is %d instead of 48, %v", len(data), data)
-	}
-	var sendNodesIPv62 SendNodesIPv6
-	err = sendNodesIPv62.UnmarshalBinary(data)
-	if err != nil {
-		t.Errorf("Failed to marshel node. %s", err)
-	}
-	// DeepEqual doesn't work on ip addresses
-	//if !reflect.DeepEqual(sendNodesIPv6, sendNodesIPv62) {
-	//	t.Errorf("Failed to unmarshal\n%v\n%v\n%v\n", sendNodesIPv6, data, sendNodesIPv62)
-	//}
-}
+//func TestGetNodes(t *testing.T) {
+//	dht, err := New()
+//	if err != nil {
+//		t.Fatalf("Failed to create server %s.", err)
+//	}
+//	node := Node{
+//		Addr: net.UDPAddr{
+//			IP:   net.ParseIP("127.0.0.1"),
+//			Port: 1234,
+//		},
+//		PublicKey: qToxPublicKey,
+//	}
+//
+//	data, err := dht.PackGetNodes(&node.PublicKey, &qToxPublicKey)
+//	if err != nil {
+//		t.Errorf("Failed to build getNodes. %s", err)
+//	}
+//	if len(data) != 113 {
+//		t.Errorf("Marshaled getNode is %d instead of 97, %v", len(data), data)
+//	}
+//}
+//
+//func TestMarshalNode(t *testing.T) {
+//	node := Node{
+//		Addr: net.UDPAddr{
+//			IP:   net.ParseIP("127.0.0.1"),
+//			Port: 1234,
+//		},
+//		PublicKey: qToxPublicKey,
+//	}
+//	data, err := node.MarshalBinary()
+//	if err != nil {
+//		t.Errorf("Failed to marsha node. %s", err)
+//	}
+//	if len(data) != 39 {
+//		t.Errorf("Marshaled node is %d instead of 39, %v", len(data), data)
+//	}
+//
+//	node6 := Node{
+//		Addr: net.UDPAddr{
+//			IP:   net.ParseIP("::1"),
+//			Port: 1234,
+//		},
+//		PublicKey: qToxPublicKey,
+//	}
+//	data, err = node6.MarshalBinary()
+//	if err != nil {
+//		t.Errorf("Failed to marshel node. %s", err)
+//	}
+//	if len(data) != 51 {
+//		t.Errorf("Marshaled node is %d instead of 51, %v", len(data), data)
+//	}
+//	var node62 Node
+//	err = node62.UnmarshalBinary(data)
+//	if err != nil {
+//		t.Errorf("Failed to marshel node. %s", err)
+//	}
+//	// DeepEqual doesn't work on ip addresses
+//	//if !reflect.DeepEqual(node6, node62) {
+//	//	t.Errorf("Failed to unmarshal\n%v\n%v\n%v\n", node6, data, node62)
+//	//}
+//}
+//
+//func TestMarshalSendNodesIPv6(t *testing.T) {
+//	node := Node{
+//		Addr: net.UDPAddr{
+//			IP:   net.ParseIP("127.0.0.1"),
+//			Port: 1234,
+//		},
+//		PublicKey: qToxPublicKey,
+//	}
+//	sendNodesIPv6 := SendNodesIPv6{
+//		Nodes:        []Node{node},
+//		SendbackData: 1,
+//	}
+//	data, err := sendNodesIPv6.MarshalBinary()
+//	if err != nil {
+//		t.Errorf("Failed to marshel node. %s", err)
+//	}
+//	if len(data) != 48 {
+//		t.Errorf("Marshaled node is %d instead of 48, %v", len(data), data)
+//	}
+//	var sendNodesIPv62 SendNodesIPv6
+//	err = sendNodesIPv62.UnmarshalBinary(data)
+//	if err != nil {
+//		t.Errorf("Failed to marshel node. %s", err)
+//	}
+//	// DeepEqual doesn't work on ip addresses
+//	//if !reflect.DeepEqual(sendNodesIPv6, sendNodesIPv62) {
+//	//	t.Errorf("Failed to unmarshal\n%v\n%v\n%v\n", sendNodesIPv6, data, sendNodesIPv62)
+//	//}
+//}

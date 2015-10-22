@@ -22,6 +22,7 @@ type Scanner struct {
 	// this holds all nodes discovered
 	AllPeersMutex sync.Mutex
 	AllPeers      map[[gotox.PublicKeySize]byte]PeerInfo
+	Done          bool
 }
 
 func NewScanner() (*Scanner, error) {
@@ -37,7 +38,7 @@ func NewScanner() (*Scanner, error) {
 		Transport: transport,
 		AllPeers:  make(map[[gotox.PublicKeySize]byte]PeerInfo),
 	}
-	transport.RegisterReceiver(&s)
+	transport.RegisterReceiver(s.Receive)
 
 	go transport.Listen()
 
@@ -84,6 +85,7 @@ func (s *Scanner) pingerTask() {
 			time.Sleep(time.Second)
 		} else {
 			if done {
+				s.Done = true
 				fmt.Println("done.")
 				return
 			}
@@ -91,7 +93,10 @@ func (s *Scanner) pingerTask() {
 	}
 }
 
-func (s *Scanner) Receive(pp *PlainPacket, addr *net.UDPAddr) error {
+func (s *Scanner) Receive(pp *PlainPacket, addr *net.UDPAddr) bool {
+	if s.Done {
+		return true
+	}
 	switch payload := pp.Payload.(type) {
 	case *GetNodesReply:
 		// There are only 4 replies
@@ -109,7 +114,7 @@ func (s *Scanner) Receive(pp *PlainPacket, addr *net.UDPAddr) error {
 		}
 		s.AllPeersMutex.Unlock()
 	default:
-		return fmt.Errorf("Internal error. Failed to handle payload of parsed packet. %d", pp.Payload.Kind())
+		fmt.Printf("Internal error. Failed to handle payload of parsed packet. %d", pp.Payload.Kind())
 	}
-	return nil
+	return false
 }
