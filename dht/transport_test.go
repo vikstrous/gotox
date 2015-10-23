@@ -41,7 +41,7 @@ func TestReceive(t *testing.T) {
 				t.Fatalf("Wrong pingID: %d", payload.RequestID)
 			}
 		default:
-			t.Fatalf("Internal error. Failed to handle payload of parsed packet. %d", pp.Payload.Kind())
+			t.Fatalf("Internal error. Failed to handle payload of parsed packet. %d\n", pp.Payload.Kind())
 		}
 		close(ch)
 		return true
