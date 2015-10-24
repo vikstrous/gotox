@@ -2,7 +2,7 @@
 
 # gotox
 
-A re-implementation of tuxcore in Go. WIP.
+A re-implementation of [toxcore](https://github.com/irungentoo/toxcore.git) in Go. WIP.
 
 TODO:
 
