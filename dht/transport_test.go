@@ -52,7 +52,7 @@ func TestReceive(t *testing.T) {
 	transport2.Send(&PingPong{IsPing: true, RequestID: 3}, &DHTPeer{PublicKey: id1.PublicKey})
 
 	// process the message
-	transport1.Listen()
+	transport1.Listen(nil)
 
 	<-ch
 }
