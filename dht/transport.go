@@ -6,9 +6,6 @@ import (
 	"time"
 )
 
-// return true to terminate the listener
-type ReceiveFunc func(*PlainPacket, *net.UDPAddr) bool
-
 type TransportMessage struct {
 	Packet PlainPacket
 	Addr   net.UDPAddr

@@ -6,12 +6,11 @@ import (
 )
 
 type LocalTransport struct {
-	ChOut       *chan []byte
-	ChIn        *chan []byte
-	ChStop      chan struct{}
-	Identity    *Identity
-	ReceiveFunc ReceiveFunc
-	dataChan    chan TransportMessage
+	ChOut    *chan []byte
+	ChIn     *chan []byte
+	ChStop   chan struct{}
+	Identity *Identity
+	dataChan chan TransportMessage
 }
 
 func NewLocalTransport(id *Identity) (*LocalTransport, error) {
@@ -76,8 +75,4 @@ listenLoop:
 
 func (t *LocalTransport) Stop() {
 	close(t.ChStop)
-}
-
-func (t *LocalTransport) RegisterReceiver(receiver ReceiveFunc) {
-	t.ReceiveFunc = receiver
 }
